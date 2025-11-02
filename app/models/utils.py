@@ -18,6 +18,8 @@ def get_model(model_name, num_classes=2, pretrained=True, freeze_base=True, inpu
         return XceptionNet(num_classes=num_classes)
     elif model_name.lower() == 'shallow':
         return ShallowDeepfakeDetector()
+    elif model_name.lower() == 'mesoinception4mhsa':
+        return MesoInception4MHSA(num_classes=num_classes)
     else:
         raise ValueError(f"Model {model_name} not supported. Choose from: meso, mesoinception, vgg, mobilenet, xception, shallow")
 
@@ -50,6 +52,8 @@ def save_model(model, save_path, epoch=None, optimizer=None, val_accuracy=None):
         architecture = 'xception'
     elif isinstance(model, ShallowDeepfakeDetector):
         architecture = 'shallow'
+    elif isinstance(model, MesoInception4MHSA):
+        architecture = 'mesoinception4mhsa'
     else:
         architecture = model.__class__.__name__
 

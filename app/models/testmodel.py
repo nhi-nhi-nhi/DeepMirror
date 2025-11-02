@@ -2,7 +2,7 @@ from videotester import DeepfakeVideoTester
 from Preprocess import DeepfakePreprocessor
 import torch
 
-model_path = r"checkpoints\meso_net_epoch_40-50.pth"
+model_path = "/home/nhigoingloud/Code/DeepMirror/DeepMirror/app/models/checkpoints/mesoinception4mhsa_best.pth"
 # model_type = model_path.split("\\")[-1].split("_")[0]
 
 # Determine image size based on model
@@ -17,7 +17,7 @@ model_path = r"checkpoints\meso_net_epoch_40-50.pth"
 # elif model_type == 'shallow':
 #     img_size = 224  # Default input image size
 
-model_type = 'meso'
+model_type = 'mesoinception4mhsa'
 output_size = (256, 256)
 
 # Initialize preprocessor

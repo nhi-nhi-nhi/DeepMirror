@@ -20,7 +20,7 @@ class DeepfakeVideoTester:
         if model_type == 'mesonet':  # Check for 'mesonet'
             model_type = 'meso'
 
-        if model_type == 'meso':
+        if model_type == 'meso' or model_type == 'mesoinception4mhsa':
             self.img_size = 256
         elif model_type == 'vgg':
             self.img_size = 224

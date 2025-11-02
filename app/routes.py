@@ -31,7 +31,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # Initialize DeepfakeDetector
-model_path = r"app/models/checkpoints/meso_net_epoch_40-50.pth"
+model_path = r"/home/nhigoingloud/Code/DeepMirror/DeepMirror/app/models/checkpoints/mesoinception4mhsa_best.pth"
 output_size = (256, 256)
 preprocessor = DeepfakePreprocessor(output_size=output_size)
 
@@ -53,7 +53,7 @@ face_detector.prepare(ctx_id=0, det_size=(64, 64))  # ctx_id=0 for GPU
 session_options = ort.SessionOptions()
 providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if 'CUDAExecutionProvider' in ort.get_available_providers() else ['CPUExecutionProvider']
 face_swapper = insightface.model_zoo.get_model(
-    'inswapper_128.onnx',
+    '/home/nhigoingloud/Code/DeepMirror/DeepMirror/app/inswapper_128.onnx',
     download=False,
     download_zip=False,
     session_options=session_options,

@@ -357,3 +357,206 @@ class MesoInceptionNet(nn.Module):
         x = self.fc2(x)
 
         return x
+        
+   
+# ================================================================================
+# MesoInception4 with MHSA
+# ================================================================================
+
+class Meso4(MesoNet): # Meso4 là một biến thể của MesoNet, có thể kế thừa
+    """Triển khai Meso4. Tương tự MesoNet nhưng có vài thay đổi nhỏ."""
+    def __init__(self, num_classes=2, img_size=256):
+        # Chúng ta có thể gọi super().__init__() và chỉ sửa đổi các lớp cần thiết,
+        # nhưng để rõ ràng, ta định nghĩa lại.
+        super(MesoNet, self).__init__() # Ghi đè __init__
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 8, kernel_size=3, padding=1), nn.BatchNorm2d(8), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(8, 8, kernel_size=5, padding=2), nn.BatchNorm2d(8), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(8, 16, kernel_size=5, padding=2), nn.BatchNorm2d(16), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(16, 16, kernel_size=5, padding=2), nn.BatchNorm2d(16), nn.ReLU(), nn.MaxPool2d(4)
+        )
+
+        with torch.no_grad():
+            dummy_input = torch.zeros(1, 3, img_size, img_size)
+            self.flatten_size = self.features(dummy_input).numel()
+
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Dropout(0.5),
+            nn.Linear(self.flatten_size, 16),
+            nn.LeakyReLU(0.1), # Thay đổi chính ở đây
+            nn.Linear(16, num_classes)
+        )
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.classifier(x)
+        return x
+
+class InceptionLayer(nn.Module):
+    """Lớp Inception tùy chỉnh cho MesoInception4."""
+    def __init__(self, in_channels, a, b, c, d):
+        super(InceptionLayer, self).__init__()
+        self.branch1 = nn.Conv2d(in_channels, a, kernel_size=1, padding=0)
+        self.branch2 = nn.Sequential(
+            nn.Conv2d(in_channels, b, kernel_size=1, padding=0), nn.ReLU(),
+            nn.Conv2d(b, b, kernel_size=3, padding=1)
+        )
+        self.branch3 = nn.Sequential(
+            nn.Conv2d(in_channels, c, kernel_size=1, padding=0), nn.ReLU(),
+            nn.Conv2d(c, c, kernel_size=3, padding=2, dilation=2)
+        )
+        self.branch4 = nn.Sequential(
+            nn.Conv2d(in_channels, d, kernel_size=1, padding=0), nn.ReLU(),
+            nn.Conv2d(d, d, kernel_size=3, padding=3, dilation=3)
+        )
+
+    def forward(self, x):
+        b1 = self.branch1(x)
+        b2 = self.branch2(x)
+        b3 = self.branch3(x)
+        b4 = self.branch4(x)
+        return torch.cat([b1, b2, b3, b4], dim=1)
+
+class MesoInception4(nn.Module):
+    """Triển khai MesoInception4."""
+    def __init__(self, num_classes=2, img_size=256):
+        super(MesoInception4, self).__init__()
+        self.features = nn.Sequential(
+            InceptionLayer(3, 1, 4, 4, 2), nn.BatchNorm2d(11), nn.ReLU(), nn.MaxPool2d(2),
+            InceptionLayer(11, 2, 4, 4, 2), nn.BatchNorm2d(12), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(12, 16, kernel_size=5, padding=2), nn.BatchNorm2d(16), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(16, 16, kernel_size=5, padding=2), nn.BatchNorm2d(16), nn.ReLU(), nn.MaxPool2d(4)
+        )
+
+        with torch.no_grad():
+            dummy_input = torch.zeros(1, 3, img_size, img_size)
+            self.flatten_size = self.features(dummy_input).numel()
+
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Dropout(0.5),
+            nn.Linear(self.flatten_size, 16),
+            nn.LeakyReLU(0.1),
+            nn.Linear(16, num_classes)
+        )
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.classifier(x)
+        return x
+
+
+class MHSA2d(nn.Module):
+    """Multi-Head Self-Attention for 2D feature maps with simple 2D sin-cos positions."""
+    def __init__(self, in_channels, num_heads, mlp_ratio=4.0, dropout=0.1, use_pos=True):
+        super().__init__()
+        self.in_channels = in_channels
+        self.num_heads = num_heads
+        self.use_pos = use_pos
+        hidden_dim = int(in_channels * mlp_ratio)
+
+        self.norm1 = nn.LayerNorm(in_channels)
+        self.attn  = nn.MultiheadAttention(in_channels, num_heads, dropout=dropout, batch_first=True)
+        self.dropout1 = nn.Dropout(dropout)
+
+        self.norm2 = nn.LayerNorm(in_channels)
+        self.ffn = nn.Sequential(
+            nn.Linear(in_channels, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, in_channels),
+            nn.Dropout(dropout),
+        )
+        self._pe_cache = {}
+
+    def _pos_emb_2d(self, C, H, W, device):
+        key = (C, H, W, device.type, getattr(device, "index", 0))
+        if key in self._pe_cache:
+            return self._pe_cache[key]
+        assert C % 4 == 0, "in_channels must be divisible by 4 for 2D sin-cos PE"
+        c = C // 4
+        y = torch.linspace(0, 1, steps=H, device=device)
+        x = torch.linspace(0, 1, steps=W, device=device)
+        yy, xx = torch.meshgrid(y, x, indexing="ij")
+
+        def pe_1d(v, dim):
+            v = v.unsqueeze(-1)
+            freqs = torch.arange(dim, device=device).float() / dim
+            freqs = 1.0 / (10000 ** freqs)
+            a = v * freqs
+            return torch.cat([torch.sin(a), torch.cos(a)], dim=-1)
+
+        pe_y = pe_1d(yy, c)
+        pe_x = pe_1d(xx, c)
+        pe = torch.cat([pe_y, pe_x], dim=-1).view(H * W, C).unsqueeze(0)  # [1, L, C]
+        self._pe_cache[key] = pe
+        return pe
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        tokens = x.flatten(2).transpose(1, 2).contiguous()  # [B, L, C]
+
+        if self.use_pos:
+            pe = self._pos_emb_2d(C, H, W, device=x.device)
+            if pe.dtype != tokens.dtype:
+                pe = pe.to(tokens.dtype)  # match AMP dtype
+            tokens = tokens + pe
+
+        t = self.norm1(tokens)
+        attn_out, _ = self.attn(t, t, t)
+        tokens = tokens + self.dropout1(attn_out)
+
+        t2 = self.norm2(tokens)
+        tokens = tokens + self.ffn(t2)
+
+        x = tokens.transpose(1, 2).contiguous().view(B, C, H, W)
+        return x
+
+class MesoInception4MHSA(nn.Module):
+    """MesoInception4 with MHSA placed before heavy downsampling."""
+    def __init__(self, num_classes=2, img_size=256, mhsa_heads=4):
+        super().__init__()
+
+        # Stage 1: Early feature extraction
+        self.stage1 = nn.Sequential(
+            InceptionLayer(3, 1, 4, 4, 2), nn.BatchNorm2d(11), nn.ReLU(), nn.MaxPool2d(2),
+            InceptionLayer(11, 2, 4, 4, 2), nn.BatchNorm2d(12), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(12, 32, kernel_size=5, padding=2), nn.BatchNorm2d(32), nn.ReLU()
+        )
+
+        # Stage 2: MHSA while feature map is still large enough
+        self.mhsa = MHSA2d(in_channels=32, num_heads=mhsa_heads)
+
+        # Stage 3: Post-attention conv & pooling
+        self.stage3 = nn.Sequential(
+            nn.MaxPool2d(2),
+            nn.Conv2d(32, 16, kernel_size=5, padding=2), nn.BatchNorm2d(16), nn.ReLU(),
+            nn.MaxPool2d(4)
+        )
+
+        # Calculate flatten size dynamically
+        with torch.no_grad():
+            dummy = torch.zeros(1, 3, img_size, img_size)
+            feat = self._forward_features(dummy)
+            self.flatten_size = feat.numel()
+
+        # Classifier
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Dropout(0.5),
+            nn.Linear(self.flatten_size, 16),
+            nn.LeakyReLU(0.1),
+            nn.Linear(16, num_classes)
+        )
+
+    def _forward_features(self, x):
+        x = self.stage1(x)
+        x = self.mhsa(x)
+        x = self.stage3(x)
+        return x
+
+    def forward(self, x):
+        x = self._forward_features(x)
+        x = self.classifier(x)
+        return x

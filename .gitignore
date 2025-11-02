@@ -15,4 +15,4 @@ build/
 
 processed_videos/
 temp_videos/
-inswapper_128.onnx
+app/inswapper_128.onnx
