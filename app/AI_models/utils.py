@@ -1,4 +1,4 @@
-from app.models.backbone import *
+from app.AI_models.backbone import *
 import os
 # Factory function to get model by name
 
@@ -107,7 +107,7 @@ def load_model(model_path, model_class=None, device='cpu'):
     if 'model_state_dict' in checkpoint:
         model.load_state_dict(checkpoint['model_state_dict'])
     else:
-        # For backward compatibility with older saved models
+        # For backward compatibility with older saved AI_models
         model.load_state_dict(checkpoint)
 
     # Move model to the specified device - use .to() method with device directly

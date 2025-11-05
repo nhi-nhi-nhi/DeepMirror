@@ -1,4 +1,4 @@
-from app.models.utils import *
+from app.AI_models.utils import *
 import torchvision.transforms as transforms
 import cv2
 import os

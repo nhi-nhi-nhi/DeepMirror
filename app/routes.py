@@ -1,8 +1,7 @@
-from flask import render_template, request, json, jsonify, send_from_directory
 from app import app
 import insightface
-from app.models.Preprocess import DeepfakePreprocessor
-from app.models.videotester import DeepfakeVideoTester
+from app.AI_models.Preprocess import DeepfakePreprocessor
+from app.AI_models.videotester import DeepfakeVideoTester
 from insightface.app import FaceAnalysis
 import base64
 import re
@@ -14,6 +13,10 @@ import os
 import uuid
 import base64
 import time
+from flask_login import login_required
+from app.limits import enforce_quota
+from flask import render_template, request, jsonify, send_from_directory, current_app
+
 
 
 # Set the directory where videos are stored
@@ -31,7 +34,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # Initialize DeepfakeDetector
-model_path = r"app/models/checkpoints/meso_net_epoch_40-50.pth"
+model_path = r"app/AI_models/checkpoints/meso_net_epoch_40-50.pth"
 output_size = (256, 256)
 preprocessor = DeepfakePreprocessor(output_size=output_size)
 
@@ -53,7 +56,7 @@ face_detector.prepare(ctx_id=0, det_size=(64, 64))  # ctx_id=0 for GPU
 session_options = ort.SessionOptions()
 providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if 'CUDAExecutionProvider' in ort.get_available_providers() else ['CPUExecutionProvider']
 face_swapper = insightface.model_zoo.get_model(
-    'inswapper_128.onnx',
+    'app/inswapper_128.onnx',
     download=False,
     download_zip=False,
     session_options=session_options,
@@ -92,11 +95,14 @@ def save_uploaded_video(base64_string):
 def index():
     return render_template('index.html', title='Index')
 
+
 @app.route('/detect')
+@login_required
 def detect():
     return render_template('df-detect/detect.html', title='Detect')
 
 @app.route('/generate')
+@login_required
 def generate():
     return render_template('df-generate/generate.html', title='Generate')
 
@@ -119,8 +125,90 @@ def convert_arrays_to_lists(obj):
     else:
         return obj
 
+@app.route("/config_info")
+def config_info():
+    from flask import current_app, jsonify, make_response
+    import os
+    data = {
+        "config_in_use": {
+            "FREE_USES": current_app.config.get("FREE_USES"),
+            "FREE_WINDOW_MIN": current_app.config.get("FREE_WINDOW_MIN"),
+            "STREAM_SESSION_MIN": current_app.config.get("STREAM_SESSION_MIN"),
+        },
+        "env_seen_by_process": {
+            "FREE_USES": os.environ.get("FREE_USES"),
+            "FREE_WINDOW_MIN": os.environ.get("FREE_WINDOW_MIN"),
+            "STREAM_SESSION_MIN": os.environ.get("STREAM_SESSION_MIN"),
+        },
+    }
+    resp = make_response(jsonify(data))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
+
+# routes.py
+from flask import jsonify, current_app
+from flask_login import current_user
+from datetime import datetime, timezone
+
+# routes.py
+from flask import jsonify, current_app
+from flask_login import current_user
+from datetime import datetime, timezone
+
+@app.route("/quota_debug")
+def quota_debug():
+    if not current_user.is_authenticated:
+        return jsonify({"error": "auth_required"}), 401
+
+    from app.models.auth_models import ServiceUsage, StreamSession
+
+    def latest(service):
+        w = (ServiceUsage.query
+             .filter_by(user_id=current_user.id, service=service)
+             .order_by(ServiceUsage.window_start.desc())
+             .first())
+        s = (StreamSession.query
+             .filter_by(user_id=current_user.id, service=service)
+             .order_by(StreamSession.expires_at.desc())
+             .first())
+
+        # Treat stored times as UTC if naive
+        now_utc = datetime.now(timezone.utc)
+        def as_utc_iso(dt):
+            if dt is None: return None
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+        expires_iso = as_utc_iso(s.expires_at) if s else None
+        # Compute seconds_left robustly
+        if s:
+            exp = s.expires_at if s.expires_at.tzinfo else s.expires_at.replace(tzinfo=timezone.utc)
+            seconds_left = max(0, int((exp - now_utc).total_seconds()))
+        else:
+            seconds_left = 0
+
+        return {
+            "window_start": w.window_start.isoformat() if w else None,
+            "uses": w.uses if w else None,
+            "stream_expires_at_utc": expires_iso,
+            "stream_seconds_left": seconds_left,
+        }
+
+    return jsonify({
+        "face_swap":       latest("face_swap"),
+        "deepfake_detect": latest("deepfake_detect"),
+        "config": {
+            "FREE_USES": current_app.config.get("FREE_USES"),
+            "FREE_WINDOW_MIN": current_app.config.get("FREE_WINDOW_MIN"),
+            "STREAM_SESSION_MIN": current_app.config.get("STREAM_SESSION_MIN"),
+        }
+    })
+
 
 @app.route('/generate_deepfake', methods=['POST'])
+@login_required
+@enforce_quota('face_swap')
 def generate_deepfake():
     global cached_source, cached_source_faces
     try:
@@ -182,6 +270,8 @@ def generate_deepfake():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/predict_deepfake', methods=['POST'])
+@login_required
+@enforce_quota('deepfake_detect')
 def predict_deepfake():
     data = request.json
     image_data = data.get("image", None)
@@ -212,6 +302,7 @@ def predict_deepfake():
         end_time = time.time()
         processing_time = end_time - start_time  # Time in seconds
         fps = 1 / processing_time if processing_time > 0 else 0
+
         return jsonify({
             'annotated_frame': frame_b64,
             'fps': fps,
