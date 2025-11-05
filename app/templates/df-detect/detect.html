@@ -56,7 +56,42 @@
         </div>
 
     </div>
-    
+    <div id="quotaDebug" style="font-size:12px;color:#777;margin-top:6px">…</div>
+<script>
+(async function(){
+  try {
+    const r = await fetch("/quota_debug", { credentials:"same-origin", cache:"no-cache" });
+    if (!r.ok) throw new Error(r.status);
+    const j = await r.json();
+    document.getElementById("quotaDebug").innerHTML =
+      `Free uses: <b>${j.config.FREE_USES}</b> | Window: <b>${j.config.FREE_WINDOW_MIN}</b> min | Stream session: <b>${j.config.STREAM_SESSION_MIN}</b> min`;
+  } catch(e) {
+    document.getElementById("quotaDebug").innerHTML = "quota_debug unavailable";
+  }
+})();
+</script>
+
+    <div id="streamTimer" style="font-size:12px;color:#777;margin-top:6px"></div>
+<script>
+let timerInterval=null;
+async function refreshStreamTimer(){
+  try{
+    const r = await fetch("/quota_debug", { credentials:"same-origin", cache:"no-cache" });
+    if(!r.ok) throw new Error(r.status);
+    const j = await r.json();
+    const secs = j?.deepfake_detect?.stream_seconds_left ?? 0;
+    const m = Math.floor(secs/60), s = secs%60;
+    document.getElementById("streamTimer").textContent =
+      secs>0 ? `Stream expires in ${m}:${s.toString().padStart(2,'0')}` : "No active stream session.";
+  }catch(e){
+    document.getElementById("streamTimer").textContent = "Timer unavailable";
+  }
+}
+timerInterval = setInterval(refreshStreamTimer, 1000);
+refreshStreamTimer();
+</script>
+
+
 </div>
 
 {% endblock content %}

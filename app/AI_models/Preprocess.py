@@ -11,7 +11,7 @@ import numpy as np
 # import os
 # Import MediaPipe for BlazeFace
 import mediapipe as mp
-# import torchvision.models as models
+# import torchvision.AI_models as AI_models
 # import torch.nn.functional as F
 
 
@@ -75,7 +75,7 @@ class DeepfakePreprocessor:
             return None
 
         resized = cv2.resize(cropped, self.output_size)
-        # Convert to RGB for consistency with deep learning models
+        # Convert to RGB for consistency with deep learning AI_models
         resized_rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         return resized_rgb
 

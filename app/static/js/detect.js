@@ -19,6 +19,9 @@ document.addEventListener("DOMContentLoaded", function () {
     let isDetecting         = false; 
     let isCameraOn          = false;
     let cameraStream        = null;
+    let detectController = null;    // AbortController for the current detect loop
+    let detectLoopRunning = false;  // prevent multiple loops at once
+
 
     const parametersInfo = document.getElementById("parametersInfo");
 
@@ -26,32 +29,44 @@ document.addEventListener("DOMContentLoaded", function () {
     // DETECT BUTTON: toggles detection on/off, calls detect loop
     // -------------------------------------------------------------------------
     if (detectButton) {
-        detectButton.addEventListener("click", function () {
-            this.classList.toggle("active");
+      detectButton.addEventListener("click", async function () {
+        this.classList.toggle("active");
+        const eyeIconOn  = this.getAttribute("data-icon-on");
+        const eyeIconOff = this.getAttribute("data-icon-off");
 
-            const eyeIconOn  = this.getAttribute("data-icon-on");
-            const eyeIconOff = this.getAttribute("data-icon-off");
+        if (this.classList.contains("active")) {
+          // START
+          this.innerHTML = `<img src="${eyeIconOn}" class="icon eye_icon_on"> Deepfake Detection: On`;
+          if (detectLoopRunning) return;          // don’t start twice
+          isDetecting = true;
+          detectLoopRunning = true;
+          detectController = new AbortController();
+          updateDetectButtonUI();
+          detectDeepfakeLoop(detectController.signal)
+            .finally(() => {
+              isDetecting = false;
+              detectLoopRunning = false;
+              detectController = null;
+              updateDetectButtonUI();
+            });
+        } else {
+          // STOP
+          this.innerHTML = `<img src="${eyeIconOff}" class="icon eye_icon_off"> Deepfake Detection: Off`;
+          isDetecting = false;
+          if (detectController) detectController.abort();
+          deepfakeImage.style.display = "none";
+          statusInfo.innerHTML = "DeepFake Detection Turned Off";
+          updateDetectButtonUI();
 
-            // Update button text/icon
-            this.innerHTML = this.classList.contains("active")
-                ? `<img src="${eyeIconOn}" class="icon eye_icon_on"> Deepfake Detection: On`
-                : `<img src="${eyeIconOff}" class="icon eye_icon_off"> Deepfake Detection: Off`;
-
-            if (this.classList.contains("active")) {
-                console.log("Deepfake detection is ON");
-                isDetecting = true;
-                detectDeepfakeLoop();
-                updateDetectButtonUI(); 
-            } else {
-                console.log("Deepfake detection is OFF");
-                isDetecting = false;
-                statusInfo.innerHTML = "DeepFake Detection Turned Off";
-
-                // If you have an overlay image, hide it here
-                deepfakeImage.style.display = "none";
-                updateDetectButtonUI(); 
-            }
-        });
+          // Tell backend to end the stream session now (so a new start consumes the next “use”)
+          fetch("/predict_deepfake", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({ source: "webcam", action: "stop" })
+          }).catch(()=>{});
+        }
+      });
     }
 
     // -------------------------------------------------------------------------
@@ -147,7 +162,7 @@ document.addEventListener("DOMContentLoaded", function () {
         canvas.height = videoElement.videoHeight;
         const ctx     = canvas.getContext("2d");
         ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-        return canvas.toDataURL("image/jpeg");
+        return canvas.toDataURL("image/jpeg", 0.6);
     }
 
     // -------------------------------------------------------------------------
@@ -184,6 +199,13 @@ document.addEventListener("DOMContentLoaded", function () {
         isCameraOn = false;
         statusInfo.innerHTML = "Camera turned off.";
         console.log("Camera stream stopped, isCameraOn =", isCameraOn);
+        // End stream server-side if user turns camera off
+        fetch("/predict_deepfake", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ source: "webcam", action: "stop" })
+        }).catch(()=>{});
     }
 
     function updateDetectButtonUI() {
@@ -217,12 +239,10 @@ document.addEventListener("DOMContentLoaded", function () {
             detectButton.innerHTML = `<img src="${eyeIconOff}" class="icon eye_icon_off"> Deepfake Detection: Off`;
         }
     });
-    
 
-    // -------------------------------------------------------------------------
-    // MAIN DETECTION LOOP: Real-time if camera is on, single-pass if video
-    // -------------------------------------------------------------------------
-    async function detectDeepfakeLoop() {
+
+    
+    async function detectDeepfakeLoop(signal) {
         console.log("detectDeepfakeLoop entered; isDetecting =", isDetecting);
 
         // If camera is on, do a continuous loop:
@@ -239,11 +259,38 @@ document.addEventListener("DOMContentLoaded", function () {
                 // statusInfo.innerHTML = "Detecting (webcam)...";
                 try {
                     const response = await fetch("/predict_deepfake", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ image: imageData, source: "webcam" }),
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      credentials: "same-origin",        // <— send login cookie
+                      cache: "no-cache",
+                      body: JSON.stringify({ image: imageData, source: "webcam" }),
                     });
-                    const data = await response.json();
+
+                    // Gracefully handle auth/quota first
+                    if (response.redirected || response.status === 401) {
+                      statusInfo.innerHTML = "Login required. Stopping stream.";
+                      break;
+                    }
+                    if (response.status === 429) {
+                      let j = {};
+                      try { j = await response.json(); } catch {}
+                      statusInfo.innerHTML = `Free quota reached. Try again in ~${j.retry_in_minutes ?? 'a few'} min.`;
+                      break;
+                    }
+
+                    // Try JSON; if it isn't, show short text for debugging
+                    let data;
+                    try {
+                      data = await response.json();
+                    } catch (e) {
+                      const text = await response.text();
+                      console.warn("Non-JSON from server:", response.status, text.slice(0,200));
+                      statusInfo.innerHTML = `Server error ${response.status}.`;
+                      await new Promise(r => setTimeout(r, 600));
+                      continue;
+                    }
+
+
 
                     if (data.annotated_frame) {
                         console.log(data.annotated_frame)
@@ -355,10 +402,6 @@ document.addEventListener("DOMContentLoaded", function () {
             };
         }
     }
-
-    // -------------------------------------------------------------------------
-    // END OF CODE
-    // -------------------------------------------------------------------------
 
     window.toggleCollapse = function (id) {
         var content = document.getElementById(id);
