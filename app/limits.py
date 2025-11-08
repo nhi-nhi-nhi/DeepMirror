@@ -4,18 +4,55 @@ from flask import current_app, request, redirect, url_for, flash, jsonify
 from flask_login import current_user
 from app import db
 from app.models.auth_models import ServiceUsage, StreamSession
-# helper to get/cleanup the latest stream session
 
+# =============================================================================
+# In-memory stream cache (process-local; switch to Redis for multi-worker setup)
+# key: (user_id, service) -> expires_at (UTC datetime)
+# =============================================================================
+_STREAM_CACHE = {}
+
+def _stream_set(uid, service, expires_at_dt: datetime):
+    _STREAM_CACHE[(uid, service)] = expires_at_dt
+
+def _stream_get(uid, service):
+    return _STREAM_CACHE.get((uid, service))
+
+def _stream_clear(uid, service):
+    _STREAM_CACHE.pop((uid, service), None)
+
+def _stream_ok(uid, service) -> bool:
+    exp = _stream_get(uid, service)
+    return bool(exp and exp > datetime.utcnow())
+
+def _stream_seconds_left(uid, service) -> int:
+    exp = _stream_get(uid, service)
+    if not exp:
+        return 0
+    delta = int((exp - datetime.utcnow()).total_seconds())
+    return max(0, delta)
+
+def _cleanup_expired_sessions():
+    now = datetime.utcnow()
+    expired = [k for k, exp in _STREAM_CACHE.items() if exp <= now]
+    for k in expired:
+        _STREAM_CACHE.pop(k, None)
+
+# =============================================================================
+# DB helper
+# =============================================================================
 def _get_active_stream_session(user_id, service):
+    """Return active StreamSession from DB, or None if expired."""
     now = datetime.utcnow()
     sess = (StreamSession.query
             .filter_by(user_id=user_id, service=service)
             .order_by(StreamSession.expires_at.desc())
             .first())
     if sess and sess.expires_at <= now:
-        # clean up expired session so it can't be re-used
-        db.session.delete(sess)
-        db.session.commit()
+        try:
+            db.session.delete(sess)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
         return None
     return sess
 
@@ -23,10 +60,7 @@ def is_json_request():
     return request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
 def get_webcam_action():
-    """
-    Returns (is_webcam, action) with action in {'start','frame','stop'}.
-    Default to 'frame' so unsolicited frames do NOT auto-start.
-    """
+    """Return (is_webcam, action) with action in {'start','frame','stop'}."""
     try:
         if request.is_json:
             j = request.get_json(silent=True) or {}
@@ -39,91 +73,114 @@ def get_webcam_action():
         pass
     return False, "frame"
 
-
 def is_subscribed(user):
-    return bool(user and user.plan in ("plus-monthly","plus-annual")
+    return bool(user and user.plan in ("plus-monthly", "plus-annual")
                 and user.plan_until and user.plan_until > datetime.utcnow())
 
+# =============================================================================
+# MAIN DECORATOR
+# =============================================================================
 def enforce_quota(service_name: str):
+    """
+    Usage:
+      - Webcam (stream) endpoints call with {"source":"webcam","action":"start|frame|stop"}.
+      - Non-stream endpoints (single calls) count 1 use per call.
+    """
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
-            # 0) NEVER run the endpoint if not logged in
+            # 0) Require authentication
+            try:
+                j = request.get_json(silent=True) or {}
+                print("[QUOTA]", service_name, "json:", j)
+            except Exception as _:
+                print("[QUOTA]", service_name, "no-json")
+
             if not current_user.is_authenticated:
                 if is_json_request():
                     return jsonify({"error": "auth_required"}), 401
                 return redirect(url_for("auth.login"))
 
+            # 1) Paid users skip limits entirely
             if is_subscribed(current_user):
                 return fn(*args, **kwargs)
 
-            FREE_USES = int(current_app.config.get("FREE_USES", 5))
+            # 2) Load config
+            FREE_USES = int(current_app.config.get("FREE_USES", 3))
             FREE_WINDOW_MIN = int(current_app.config.get("FREE_WINDOW_MIN", 30))
-            STREAM_SESSION_MIN = int(current_app.config.get("STREAM_SESSION_MIN", 5))
+            STREAM_SESSION_MIN = int(current_app.config.get("STREAM_SESSION_MIN", 2))
             now = datetime.utcnow()
 
+            # 3) Webcam / stream mode
             is_webcam, action = get_webcam_action()
-
             if is_webcam:
-                now = datetime.utcnow()
+                uid = current_user.id
+                _cleanup_expired_sessions()
 
-                # STOP: expire immediately and return lightweight OK
+                # ---- STOP ----
                 if action == "stop":
                     sess = (StreamSession.query
-                            .filter_by(user_id=current_user.id, service=service_name)
+                            .filter_by(user_id=uid, service=service_name)
                             .order_by(StreamSession.expires_at.desc())
                             .first())
                     if sess:
                         sess.expires_at = now
                         db.session.commit()
-                    # optionally short-circuit here so your endpoint doesn't do heavy work
+                    _stream_clear(uid, service_name)
                     return jsonify({"ok": True, "stopped": True}), 200
 
-                # Clean up expired first
-                sess = _get_active_stream_session(current_user.id, service_name)
-
+                # ---- FRAME ----
                 if action == "frame":
-                    # Allow only if a session is active; DO NOT auto-start
-                    if sess:
+                    if _stream_ok(uid, service_name):
                         return fn(*args, **kwargs)
-                    # Session expired: tell client to stop
+                    sess = _get_active_stream_session(uid, service_name)
+                    if sess and sess.expires_at > now:
+                        _stream_set(uid, service_name, sess.expires_at)
+                        return fn(*args, **kwargs)
+                    _stream_clear(uid, service_name)
                     return jsonify({"error": "stream_session_expired"}), 440
 
-                # action == "start"
-                if sess:
-                    # Already active, don't consume again
+                # ---- START ----
+                if _stream_ok(uid, service_name):
                     return fn(*args, **kwargs)
 
-                # Need to consume ONE use to start a new session
+                sess = _get_active_stream_session(uid, service_name)
+                if sess and sess.expires_at > now:
+                    _stream_set(uid, service_name, sess.expires_at)
+                    return fn(*args, **kwargs)
+
+                # Not active: need to consume a use
                 window = (ServiceUsage.query
-                          .filter_by(user_id=current_user.id, service=service_name)
+                          .filter_by(user_id=uid, service=service_name)
                           .order_by(ServiceUsage.window_start.desc())
                           .first())
                 if (not window) or (now - window.window_start > timedelta(minutes=FREE_WINDOW_MIN)):
-                    window = ServiceUsage(
-                        user_id=current_user.id, service=service_name,
-                        window_start=now, uses=0
-                    )
-                    db.session.add(window);
+                    window = ServiceUsage(user_id=uid, service=service_name,
+                                          window_start=now, uses=0)
+                    db.session.add(window)
                     db.session.commit()
 
                 if window.uses >= FREE_USES:
                     retry_in = (window.window_start + timedelta(minutes=FREE_WINDOW_MIN)) - now
-                    mins_left = max(0, int(retry_in.total_seconds() // 60))
+                    mins_left = max(0, int((retry_in.total_seconds() + 59) // 60))
                     return jsonify({"error": "free_quota_exceeded",
                                     "retry_in_minutes": mins_left}), 429
 
-                window.uses += 1;
+                # consume one token and create session
+                window.uses += 1
                 db.session.commit()
+
                 ttl_min = min(STREAM_SESSION_MIN, FREE_WINDOW_MIN)
-                db.session.add(StreamSession(
-                    user_id=current_user.id, service=service_name,
-                    expires_at=now + timedelta(minutes=ttl_min)
-                ))
+                expires_at = now + timedelta(minutes=ttl_min)
+
+                new_sess = StreamSession(user_id=uid, service=service_name, expires_at=expires_at)
+                db.session.add(new_sess)
                 db.session.commit()
+
+                _stream_set(uid, service_name, expires_at)
                 return fn(*args, **kwargs)
 
-            # 2) Non-stream path: 1 call = 1 use
+            # 4) Non-stream: 1 call = 1 use
             window = (ServiceUsage.query
                       .filter_by(user_id=current_user.id, service=service_name)
                       .order_by(ServiceUsage.window_start.desc())
@@ -131,19 +188,35 @@ def enforce_quota(service_name: str):
             if (not window) or (now - window.window_start > timedelta(minutes=FREE_WINDOW_MIN)):
                 window = ServiceUsage(user_id=current_user.id, service=service_name,
                                       window_start=now, uses=0)
-                db.session.add(window); db.session.commit()
+                db.session.add(window)
+                db.session.commit()
 
             if window.uses >= FREE_USES:
                 retry_in = (window.window_start + timedelta(minutes=FREE_WINDOW_MIN)) - now
-                mins_left = max(0, int(retry_in.total_seconds() // 60))
+                mins_left = max(0, int((retry_in.total_seconds() + 59) // 60))
                 if is_json_request():
-                    return jsonify({"error":"free_quota_exceeded",
-                                    "message":f"Free quota reached. Try again in ~{mins_left} minutes.",
+                    return jsonify({"error": "free_quota_exceeded",
+                                    "message": f"Free quota reached. Try again in ~{mins_left} minutes.",
                                     "retry_in_minutes": mins_left}), 429
-                flash(f"Free quota reached. Try again in ~{mins_left} minutes.","warning")
+                flash(f"Free quota reached. Try again in ~{mins_left} minutes.", "warning")
                 return redirect(url_for("index"))
 
-            window.uses += 1; db.session.commit()
+            window.uses += 1
+            db.session.commit()
             return fn(*args, **kwargs)
         return wrapper
     return decorator
+
+# =============================================================================
+# Debug helpers
+# =============================================================================
+def stream_seconds_left_for(user_id, service):
+    return _stream_seconds_left(user_id, service)
+
+def stream_debug_info(user_id, service):
+    secs = _stream_seconds_left(user_id, service)
+    return {
+        "service": service,
+        "active": _stream_ok(user_id, service),
+        "seconds_left": secs,
+    }

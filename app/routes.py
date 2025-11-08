@@ -20,7 +20,9 @@ from datetime import datetime, timezone
 from flask import jsonify, current_app
 from flask_login import current_user
 from app.models.auth_models import ServiceUsage, StreamSession
-
+from flask_login import current_user
+from app.limits import stream_seconds_left_for  # <-- adjust path to where your limits.py lives
+from flask import current_app, url_for
 
 # Set the directory where videos are stored
 UPLOAD_FOLDER = os.path.join(os.getcwd(), 'processed_videos')  # Ensure path is correct
@@ -73,10 +75,13 @@ def base64_to_image(base64_string):
     np_arr = np.frombuffer(img_data, np.uint8)
     return cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
-def image_to_base64(image):
-    """Convert OpenCV image to Base64"""
-    _, buffer = cv2.imencode('.jpg', image)
-    return f"data:image/jpeg;base64,{base64.b64encode(buffer).decode()}"
+def image_to_base64(image, quality=80):
+    params = [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)]
+    ok, buffer = cv2.imencode('.jpg', image, params)
+    if not ok:
+        raise RuntimeError("imencode failed")
+    return "data:image/jpeg;base64," + base64.b64encode(buffer).decode()
+
 
 
 def save_uploaded_video(base64_string):
@@ -188,66 +193,152 @@ def quota_debug():
 
 @app.route('/generate_deepfake', methods=['POST'])
 @login_required
-@enforce_quota('face_swap')
 def generate_deepfake():
+    """
+    Streaming (webcam):
+      START: {"source":"webcam","action":"start","source_img":"<b64>"}  -> consumes 1 token
+      FRAME: {"source":"webcam","action":"frame","target_img":"<b64>"}  -> per-frame swap
+      STOP : {"source":"webcam","action":"stop"}                         -> ends session
+
+    Single-shot (upload):
+      {"source":"upload","source_img":"<b64>","target_img":"<b64>"}      -> 1 use
+    """
+    from flask import jsonify, request
+    import time, numpy as np
+
     global cached_source, cached_source_faces
+
+    data = request.get_json(silent=True) or {}
+    source_type = data.get("source")
+    action = (data.get("action") or "").lower()
+
+    # ------------------------------------------------------------------
+    # HANDLE STREAM CONTROL ACTIONS (start / stop)
+    # ------------------------------------------------------------------
+    if source_type == "webcam" and action in ("start", "stop"):
+        # We only want to run enforce_quota for control actions, not every frame.
+        return enforce_quota('face_swap')(_generate_deepfake_stream_control)(data)
+
+    # ------------------------------------------------------------------
+    # HANDLE FRAME PROCESSING (high FPS, skip DB entirely)
+    # ------------------------------------------------------------------
+    if source_type == "webcam" and action == "frame":
+        # must have cached source face from START
+        if not cached_source_faces:
+            return jsonify({"error": "stream_session_expired"}), 440
+
+        # ---- HARD STOP if session expired (defensive guard) ----
+
+        if stream_seconds_left_for(current_user.id, 'face_swap') <= 0:
+            # tell the client to stop immediately
+            return jsonify({"error": "stream_session_expired"}), 440
+
+        tgt_b64 = data.get("target_img") or data.get("target")
+        if not tgt_b64:
+            return jsonify({"deepfake_image": None, "fps": 0}), 200
+
+        t0 = time.time()
+        try:
+            target_img   = base64_to_image(tgt_b64)
+            target_faces = face_detector.get(target_img)
+            if not target_faces:
+                return jsonify({"deepfake_image": None, "fps": 0}), 200
+
+            # perform face swap using cached source (no re-detection)
+            result_img = face_swapper.get(
+                target_img, target_faces[0], cached_source_faces[0], paste_back=True
+            )
+
+            result_base64 = image_to_base64(result_img, quality=80)
+            fps = 1.0 / max(1e-6, (time.time() - t0))
+
+            # lightweight, minimal return
+            return jsonify({
+                "deepfake_image": result_base64,
+                "fps": fps,
+                "distance": None
+            }), 200
+
+        except Exception as e:
+            return jsonify({"error": "server_exception", "message": str(e)}), 500
+
+    # ------------------------------------------------------------------
+    # SINGLE-SHOT (upload)
+    # ------------------------------------------------------------------
+    if source_type == "upload":
+        # Non-stream path = one token per call, so wrap in quota
+        return enforce_quota('face_swap')(_generate_deepfake_single_upload)(data)
+
+    return jsonify({"error": "Invalid or missing 'source'/'action'"}), 400
+
+def _generate_deepfake_stream_control(data):
+    """Handles only start/stop actions (token consumption + cache)."""
+    from flask import jsonify
+    global cached_source, cached_source_faces
+
+    source_type = data.get("source")
+    action = (data.get("action") or "").lower()
+    now = datetime.utcnow()
+
+    # ---- START ----
+    if source_type == "webcam" and action == "start":
+        src_b64 = data.get("source_img")
+        if not src_b64:
+            return jsonify({"error": "source_img required on start"}), 400
+
+        try:
+            cached_source = src_b64
+            src_img = base64_to_image(src_b64)
+            cached_source_faces = face_detector.get(src_img)
+            if not cached_source_faces:
+                return jsonify({"error": "No face in source image"}), 400
+            return jsonify({"ok": True, "action": "start"}), 200
+        except Exception as e:
+            return jsonify({"error": "server_exception", "message": str(e)}), 500
+
+    # ---- STOP ----
+    if source_type == "webcam" and action == "stop":
+        cached_source = None
+        cached_source_faces = None
+        return jsonify({"ok": True, "action": "stop"}), 200
+
+    return jsonify({"error": "Invalid stream control action"}), 400
+
+
+def _generate_deepfake_single_upload(data):
+    """Single upload-based face swap (counts as one token)."""
+    from flask import jsonify
+    import time
+
+    src_b64 = data.get("source_img") or data.get("source")
+    tgt_b64 = data.get("target_img") or data.get("target")
+    if not src_b64 or not tgt_b64:
+        return jsonify({"error": "source_img/target_img required"}), 400
+
+    t0 = time.time()
     try:
-        data = request.json
+        src_img = base64_to_image(src_b64)
+        src_faces = face_detector.get(src_img)
+        if not src_faces:
+            return jsonify({"error": "No face in source image"}), 400
 
-        # Check if the source image in the request is new or else not update
-        if 'source' not in data:
-            return jsonify({'error': 'Source image is missing'}), 400
-        
-        start_time = time.time()
-        if cached_source is None or data['source'] != cached_source:
-            cached_source = data['source']
-            source_img = base64_to_image(cached_source)
-            cached_source_faces = face_detector.get(source_img)
+        tgt_img = base64_to_image(tgt_b64)
+        tgt_faces = face_detector.get(tgt_img)
+        if not tgt_faces:
+            return jsonify({"deepfake_image": None, "fps": 0}), 200
 
-        # Process the target image as usual
-        target_img = base64_to_image(data['target'])
-        target_faces = face_detector.get(target_img)
+        result_img = face_swapper.get(tgt_img, tgt_faces[0], src_faces[0], paste_back=True)
+        result_base64 = image_to_base64(result_img, quality=80)
+        fps = 1.0 / max(1e-6, (time.time() - t0))
 
-        # Check that faces were detected in the source image
-        if not cached_source_faces or len(cached_source_faces) == 0:
-            return jsonify({'error': 'No face detected in the source image'}), 400
-
-        # Ignores the error
-        if len(target_faces) == 0:
-            return jsonify({'deepfake_image': None, 'fps': 0})
-
-        # Calculate embeddings for source and target faces
-        source_embedding = cached_source_faces[0].embedding
-
-        # Perform face swap using the first detected face in both images
-        result_img = face_swapper.get(target_img, target_faces[0], cached_source_faces[0], paste_back=True)
-
-        # Convert the resulting deepfake image to Base64
-        result_base64 = image_to_base64(result_img)
-
-        # Extract face embeddings from the generated deepfake image
-        result_faces = face_detector.get(result_img)
-        if len(result_faces) > 0:
-            result_face_embedding = result_faces[0].embedding
-            distance = np.linalg.norm(source_embedding - result_face_embedding)
-        else:
-            distance = None
-            result_face_embedding = None
-
-        # Calculate FPS
-        end_time = time.time()
-        processing_time = end_time - start_time  # Time in seconds
-        fps = 1 / processing_time if processing_time > 0 else 0
-
-        # Return the deepfake image, FPS, distance, and the result face embedding
         return jsonify({
-            'deepfake_image': result_base64,
-            'fps': fps,
-            'distance': distance.tolist(),
-        })
-    
+            "deepfake_image": result_base64,
+            "fps": fps,
+            "distance": None
+        }), 200
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": "server_exception", "message": str(e)}), 500
+
 
 @app.route('/predict_deepfake', methods=['POST'])
 @login_required
