@@ -22,20 +22,22 @@ def _get_active_stream_session(user_id, service):
 def is_json_request():
     return request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
-def webcam_action_and_flag():
+def get_webcam_action():
     """
-    Returns (is_webcam, action) where action in {"start_or_frame", "stop"}.
-    Default action is start_or_frame to treat frames as part of an active session.
+    Returns (is_webcam, action) with action in {'start','frame','stop'}.
+    Default to 'frame' so unsolicited frames do NOT auto-start.
     """
     try:
         if request.is_json:
             j = request.get_json(silent=True) or {}
             if j.get("source") == "webcam":
-                action = j.get("action", "start_or_frame")
-                return True, ("stop" if action == "stop" else "start_or_frame")
+                a = (j.get("action") or "frame").lower()
+                if a not in ("start", "frame", "stop"):
+                    a = "frame"
+                return True, a
     except Exception:
         pass
-    return False, "start_or_frame"
+    return False, "frame"
 
 
 def is_subscribed(user):
@@ -60,33 +62,43 @@ def enforce_quota(service_name: str):
             STREAM_SESSION_MIN = int(current_app.config.get("STREAM_SESSION_MIN", 5))
             now = datetime.utcnow()
 
-            is_webcam, action = webcam_action_and_flag()
+            is_webcam, action = get_webcam_action()
 
             if is_webcam:
                 now = datetime.utcnow()
 
-                # STOP request: expire immediately
+                # STOP: expire immediately and return lightweight OK
                 if action == "stop":
                     sess = (StreamSession.query
                             .filter_by(user_id=current_user.id, service=service_name)
                             .order_by(StreamSession.expires_at.desc())
                             .first())
                     if sess:
-                        sess.expires_at = now  # expire now
+                        sess.expires_at = now
                         db.session.commit()
-                    return fn(*args, **kwargs)
+                    # optionally short-circuit here so your endpoint doesn't do heavy work
+                    return jsonify({"ok": True, "stopped": True}), 200
 
-                # Active session? allow frame, DO NOT touch expires_at
+                # Clean up expired first
                 sess = _get_active_stream_session(current_user.id, service_name)
+
+                if action == "frame":
+                    # Allow only if a session is active; DO NOT auto-start
+                    if sess:
+                        return fn(*args, **kwargs)
+                    # Session expired: tell client to stop
+                    return jsonify({"error": "stream_session_expired"}), 440
+
+                # action == "start"
                 if sess:
+                    # Already active, don't consume again
                     return fn(*args, **kwargs)
 
-                # No active session -> need to consume ONE use and start a new session
+                # Need to consume ONE use to start a new session
                 window = (ServiceUsage.query
                           .filter_by(user_id=current_user.id, service=service_name)
                           .order_by(ServiceUsage.window_start.desc())
                           .first())
-
                 if (not window) or (now - window.window_start > timedelta(minutes=FREE_WINDOW_MIN)):
                     window = ServiceUsage(
                         user_id=current_user.id, service=service_name,
@@ -98,20 +110,16 @@ def enforce_quota(service_name: str):
                 if window.uses >= FREE_USES:
                     retry_in = (window.window_start + timedelta(minutes=FREE_WINDOW_MIN)) - now
                     mins_left = max(0, int(retry_in.total_seconds() // 60))
-                    if is_json_request():
-                        return jsonify({"error": "free_quota_exceeded",
-                                        "retry_in_minutes": mins_left}), 429
-                    flash(f"Free quota reached. Try again in ~{mins_left} minutes.", "warning")
-                    return redirect(url_for("index"))
+                    return jsonify({"error": "free_quota_exceeded",
+                                    "retry_in_minutes": mins_left}), 429
 
-                # consume one use and start fixed-length session
                 window.uses += 1;
                 db.session.commit()
                 ttl_min = min(STREAM_SESSION_MIN, FREE_WINDOW_MIN)
-                new_sess = StreamSession(user_id=current_user.id,
-                                         service=service_name,
-                                         expires_at=now + timedelta(minutes=ttl_min))
-                db.session.add(new_sess);
+                db.session.add(StreamSession(
+                    user_id=current_user.id, service=service_name,
+                    expires_at=now + timedelta(minutes=ttl_min)
+                ))
                 db.session.commit()
                 return fn(*args, **kwargs)
 

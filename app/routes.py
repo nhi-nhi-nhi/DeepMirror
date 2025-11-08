@@ -16,7 +16,10 @@ import time
 from flask_login import login_required
 from app.limits import enforce_quota
 from flask import render_template, request, jsonify, send_from_directory, current_app
-
+from datetime import datetime, timezone
+from flask import jsonify, current_app
+from flask_login import current_user
+from app.models.auth_models import ServiceUsage, StreamSession
 
 
 # Set the directory where videos are stored
@@ -125,42 +128,17 @@ def convert_arrays_to_lists(obj):
     else:
         return obj
 
-@app.route("/config_info")
-def config_info():
-    from flask import current_app, jsonify, make_response
-    import os
-    data = {
-        "config_in_use": {
-            "FREE_USES": current_app.config.get("FREE_USES"),
-            "FREE_WINDOW_MIN": current_app.config.get("FREE_WINDOW_MIN"),
-            "STREAM_SESSION_MIN": current_app.config.get("STREAM_SESSION_MIN"),
-        },
-        "env_seen_by_process": {
-            "FREE_USES": os.environ.get("FREE_USES"),
-            "FREE_WINDOW_MIN": os.environ.get("FREE_WINDOW_MIN"),
-            "STREAM_SESSION_MIN": os.environ.get("STREAM_SESSION_MIN"),
-        },
-    }
-    resp = make_response(jsonify(data))
-    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    return resp
-
-# routes.py
-from flask import jsonify, current_app
-from flask_login import current_user
-from datetime import datetime, timezone
-
-# routes.py
-from flask import jsonify, current_app
-from flask_login import current_user
-from datetime import datetime, timezone
-
 @app.route("/quota_debug")
 def quota_debug():
     if not current_user.is_authenticated:
-        return jsonify({"error": "auth_required"}), 401
+        return jsonify({"error":"auth_required"}), 401
 
-    from app.models.auth_models import ServiceUsage, StreamSession
+    cfg = {
+        "FREE_USES": int(current_app.config.get("FREE_USES", 3)),
+        "FREE_WINDOW_MIN": int(current_app.config.get("FREE_WINDOW_MIN", 30)),
+        "STREAM_SESSION_MIN": int(current_app.config.get("STREAM_SESSION_MIN", 5)),
+    }
+    now = datetime.now(timezone.utc)
 
     def latest(service):
         w = (ServiceUsage.query
@@ -172,38 +150,40 @@ def quota_debug():
              .order_by(StreamSession.expires_at.desc())
              .first())
 
-        # Treat stored times as UTC if naive
-        now_utc = datetime.now(timezone.utc)
-        def as_utc_iso(dt):
+        # normalize to UTC
+        def as_utc(dt):
             if dt is None: return None
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
-        expires_iso = as_utc_iso(s.expires_at) if s else None
-        # Compute seconds_left robustly
-        if s:
-            exp = s.expires_at if s.expires_at.tzinfo else s.expires_at.replace(tzinfo=timezone.utc)
-            seconds_left = max(0, int((exp - now_utc).total_seconds()))
+        w_start = as_utc(w.window_start) if w else None
+        s_exp   = as_utc(s.expires_at)   if s else None
+
+        # seconds left in stream + window
+        stream_left = max(0, int((s_exp - now).total_seconds())) if s_exp else 0
+        if w_start:
+            window_total = cfg["FREE_WINDOW_MIN"] * 60
+            window_left = max(0, window_total - int((now - w_start).total_seconds()))
         else:
-            seconds_left = 0
+            window_left = 0
+
+        uses = w.uses if w else 0
+        remaining = max(0, cfg["FREE_USES"] - uses)
 
         return {
-            "window_start": w.window_start.isoformat() if w else None,
-            "uses": w.uses if w else None,
-            "stream_expires_at_utc": expires_iso,
-            "stream_seconds_left": seconds_left,
+            "window_start": w_start.isoformat() if w_start else None,
+            "uses": uses,
+            "remaining_tokens": remaining,
+            "window_seconds_left": window_left,
+            "stream_seconds_left": stream_left,
         }
 
     return jsonify({
-        "face_swap":       latest("face_swap"),
         "deepfake_detect": latest("deepfake_detect"),
-        "config": {
-            "FREE_USES": current_app.config.get("FREE_USES"),
-            "FREE_WINDOW_MIN": current_app.config.get("FREE_WINDOW_MIN"),
-            "STREAM_SESSION_MIN": current_app.config.get("STREAM_SESSION_MIN"),
-        }
+        "face_swap": latest("face_swap"),
+        "config": cfg,
+        "effective_stream_ttl_min": min(cfg["STREAM_SESSION_MIN"], cfg["FREE_WINDOW_MIN"]),
     })
+
 
 
 @app.route('/generate_deepfake', methods=['POST'])
@@ -273,69 +253,75 @@ def generate_deepfake():
 @login_required
 @enforce_quota('deepfake_detect')
 def predict_deepfake():
-    data = request.json
-    image_data = data.get("image", None)
+    # Parse JSON safely
+    data = request.get_json(silent=True) or {}
     source_type = data.get("source", None)
-    fps = 0
-    if not image_data:
-        return jsonify({"error": "No image provided"}), 400
+    action = (data.get("action") or "").lower()
+    image_data = data.get("image")
 
-    # Process based on source type
+    # Control pings for webcam streaming: no image required
+    # The quota decorator already handled accounting/session changes.
+    if source_type == "webcam" and action in ("start", "stop"):
+        return jsonify({"ok": True, "action": action}), 200
+
+    # Webcam frames
     if source_type == "webcam":
-        start_time = time.time()
-        print("Processing real-time webcam frame...")
+        if not image_data:
+            return jsonify({"error": "No image provided"}), 400
 
+        start_time = time.time()
         try:
-            encoded_data = image_data.split(",")[1]
+            encoded_data = image_data.split(",", 1)[1]
             np_arr = np.frombuffer(base64.b64decode(encoded_data), np.uint8)
             frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if frame is None:
+                raise ValueError("cv2.imdecode returned None")
         except Exception as e:
             return jsonify({"error": f"Error decoding image: {str(e)}"}), 400
 
-        frame, parameters = tester.process_frame(frame)
-        # Suppose parameters = {"some_data": np.array([...]), "some_dict": {...}}
-        converted_parameters = convert_arrays_to_lists(parameters)
+        try:
+            frame, parameters = tester.process_frame(frame)
+        except Exception as e:
+            return jsonify({"error": "server_exception", "message": str(e)}), 500
+
         frame_b64 = image_to_base64(frame)
-
-
-        # Calculate FPS
-        end_time = time.time()
-        processing_time = end_time - start_time  # Time in seconds
-        fps = 1 / processing_time if processing_time > 0 else 0
+        fps = 1.0 / max(1e-6, (time.time() - start_time))
 
         return jsonify({
-            'annotated_frame': frame_b64,
-            'fps': fps,
-            'results': converted_parameters,
-    })
-    
+            "annotated_frame": frame_b64,
+            "fps": fps,
+            "results": convert_arrays_to_lists(parameters),
+        }), 200
+
+    # Video branch (single job => counts as one use)
     if source_type == "video":
-        print("Processing uploaded video...")
-        
+        if not image_data:
+            return jsonify({"error": "No video provided"}), 400
         try:
-            # Save input video
             video_path = save_uploaded_video(image_data)
 
-            # Generate a unique output video file
             output_filename = f"processed_{uuid.uuid4().hex}.mp4"
-            output_video_path = "app/static/processed_videos/" + output_filename
+            output_dir = os.path.join("app", "static", "processed_videos")
+            os.makedirs(output_dir, exist_ok=True)
+            output_video_path = os.path.join(output_dir, output_filename)
 
-            # Ensure the directory exists
-            os.makedirs("app/static/processed_videos", exist_ok=True)
-
-            # Process the video
             results = tester.analyze_video(
                 input_video_path=video_path,
                 output_video_path=output_video_path,
                 display_results=False,
                 save_frames=False
             )
-
-
         except Exception as e:
             return jsonify({"error": f"Error processing video: {str(e)}"}), 400
 
-        return jsonify({"processed_video": output_video_path, "results": results})
+        return jsonify({
+            "processed_video": output_video_path,
+            "results": results
+        }), 200
+
+    # Unknown source
+    return jsonify({"error": "Invalid or missing 'source'"}), 400
+
 
 @app.route('/processed_videos/<filename>')
 def serve_video(filename):

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/account.css') }}">
+<!-- Thêm CSS Flash Messages nếu cần -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+
+<section class="account-container">
+    <div class="account-card">
+        <h2>Thông tin Tài khoản</h2>
+        <p class="account-intro">Quản lý gói dịch vụ và hạn mức sử dụng của bạn.</p>
+
+        <!-- Hiển thị thông báo flash -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <ul class="flashes">
+                {% for category, message in messages %}
+                    <li class="flash-{{ category }}">{{ message }}</li>
+                {% endfor %}
+                </ul>
+            {% endif %}
+        {% endwith %}
+
+        <div class="user-info-grid">
+            <div class="info-item">
+                <span class="info-label">Tên Đăng nhập (Email):</span>
+                <span class="info-value">{{ current_user.email }}</span>
+            </div>
+
+            <div class="info-item">
+                <span class="info-label">Số Token Hiện tại:</span>
+                <span class="info-value token-count">{{ current_user.tokens }}</span>
+            </div>
+
+            <!-- CHỈ HIỂN THỊ THÔNG TIN GÓI DỊCH VỤ NẾU KHÔNG PHẢI GÓI 'free' -->
+            {% if current_user.plan != 'free' %}
+                <div class="info-item">
+                    <span class="info-label">Gói Dịch vụ:</span>
+                    <span class="info-value plan-name">{{ current_user.plan | upper }}</span>
+                </div>
+
+                {% if current_user.plan_until %}
+                <div class="info-item">
+                    <span class="info-label">Hết hạn vào:</span>
+                    <!-- Định dạng lại ngày tháng cho dễ đọc -->
+                    <span class="info-value">{{ current_user.plan_until.strftime('%d/%m/%Y, %H:%M') }}</span>
+                </div>
+                {% endif %}
+            {% endif %}
+            <!-- HẾT PHẦN KIỂM TRA -->
+        </div>
+
+        <div class="action-buttons">
+            <a href="{{ url_for('auth.upgrade_tokens') }}" class="btn btn-primary">Mua thêm Token</a>
+            <a href="{{ url_for('auth.change_password') }}" class="btn btn-secondary">Thay đổi Mật khẩu</a>
+        </div>
+
+    </div>
+</section>
+
+{% endblock content %}

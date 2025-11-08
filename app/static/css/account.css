@@ -1,0 +1,230 @@
+/* --- TỔNG THỂ & LAYOUT --- */
+.account-container {
+    display: flex;
+    justify-content: center;
+    padding: 50px 20px;
+    /* LOẠI BỎ BACKGROUND COLOR */
+    /* background-color: var(--light-color); */
+    min-height: 80vh; /* Giữ chiều cao tương đối */
+}
+/* Thẻ chính chứa nội dung Tài khoản */
+.account-card, .upgrade-card {
+    background-color: var(--white-color);
+    padding: 40px;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    max-width: 900px; /* Tăng chiều rộng cho trang Upgrade */
+    width: 100%;
+}
+
+/* Tiêu đề chính trang */
+.main-page-title {
+    color: var(--text-color);
+    font-weight: 800;
+    margin-bottom: 5px;
+    font-size: 3rem; /* To hơn */
+    text-align: center; /* Căn giữa */
+}
+
+.account-card h2, .upgrade-card h2 {
+    color: var(--text-color);
+    font-weight: 700;
+    margin-bottom: 5px;
+    font-size: 2.4rem;
+}
+
+.account-intro {
+    color: #888;
+    margin-bottom: 30px;
+    font-size: 1.6rem;
+    text-align: center;
+}
+
+/* --- TRANG THÔNG TIN TÀI KHOẢN --- */
+.user-info-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 15px;
+    margin-bottom: 40px;
+    border: 1px solid var(--light-color);
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.info-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px dashed var(--light-color);
+    font-size: 1.6rem;
+}
+
+.info-item:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.info-label {
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.info-value {
+    color: var(--black-color);
+}
+
+.token-count {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: var(--primary-color);
+    padding: 2px 8px;
+    border-radius: 4px;
+    background-color: #fce8ee; /* Nền nhẹ để làm nổi bật token */
+}
+
+/* --- ACTION BUTTONS (Dùng chung cho cả hai trang) --- */
+.action-buttons {
+    display: flex;
+    gap: 15px;
+    margin-top: 30px;
+}
+
+.btn {
+    padding: 12px 25px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 700;
+    transition: all 0.2s;
+    font-size: 1.6rem;
+    text-align: center;
+}
+
+.btn-primary {
+    background-color: var(--primary-color);
+    color: var(--text-color);
+}
+.btn-primary:hover {
+    background-color: #f0a7b9;
+    box-shadow: 0 4px 8px rgba(241, 177, 193, 0.4);
+}
+
+.btn-secondary {
+    background-color: var(--text-color);
+    color: var(--white-color);
+}
+.btn-secondary:hover {
+    background-color: #5a2e5a;
+}
+
+/* --- TRANG MUA TOKENS (UPGRADE) --- */
+
+.upgrade-card {
+    max-width: 800px;
+}
+
+/* Bố cục Grid 2 cột cho Bước 1 và Bước 2 */
+.upgrade-content-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.5fr; /* Bước 2 rộng hơn Bước 1 */
+    gap: 40px;
+    margin-top: 30px;
+}
+
+/* CĂN CHỈNH TIÊU ĐỀ BƯỚC NGANG HÀNG */
+.qr-payment-section h2, .upgrade-form h2 {
+    /* Đảm bảo tiêu đề bắt đầu từ cùng một vị trí */
+    margin-top: 0;
+}
+
+.qr-payment-section {
+    padding: 20px;
+    border-right: 1px dashed var(--light-color);
+    text-align: center;
+}
+
+.qr-image-container {
+    padding: 15px;
+    background-color: var(--white-color);
+    display: inline-block;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    margin: 20px 0;
+}
+
+.qr-image {
+    width: 180px;
+    height: 180px;
+    display: block;
+}
+
+.qr-note {
+    font-size: 1.4rem;
+    color: var(--text-color);
+    font-weight: 600;
+    margin-top: 15px;
+}
+
+/* --- TOKEN OPTIONS STYLES --- */
+.token-options-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+    margin: 20px 0 30px;
+}
+
+.token-option {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 15px;
+    border: 2px solid var(--light-color);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Tăng hiệu ứng hover */
+.token-option:hover {
+    border-color: #f0a7b9;
+}
+
+/* Ẩn radio button mặc định */
+.token-option input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    width: 1px;
+    height: 1px;
+}
+
+/* HIỆU ỨNG KHI ĐƯỢC CHỌN */
+.token-option.selected {
+    border-color: var(--primary-color);
+    background-color: #fff0f5;
+    box-shadow: 0 4px 12px rgba(241, 177, 193, 0.6);
+}
+
+.token-amount-label {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: var(--text-color);
+}
+
+.token-price {
+    font-size: 1.5rem;
+    color: #888;
+    margin-top: 5px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .upgrade-content-grid {
+        grid-template-columns: 1fr; /* Chuyển sang bố cục 1 cột trên mobile */
+        gap: 30px;
+    }
+    .qr-payment-section {
+        border-right: none;
+        border-bottom: 1px dashed var(--light-color);
+    }
+}

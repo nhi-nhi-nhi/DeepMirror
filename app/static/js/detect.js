@@ -25,49 +25,200 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const parametersInfo = document.getElementById("parametersInfo");
 
+    // Create the two sub-panels once on load
+    function ensureParamSubpanels() {
+      if (!document.getElementById("tokenLogDiv") || !document.getElementById("metricsDiv")) {
+        const html = `
+          <div id="tokenLogDiv" style="font-family: ui-monospace, Menlo, monospace; font-size:12px;"></div>
+          <div id="metricsDiv"   style="margin-top:8px;"></div>
+        `;
+        parametersInfo.innerHTML = html;
+      }
+    }
+
+    // Call it immediately so the placeholders exist
+    ensureParamSubpanels();
+    // Optional: show a friendly default in the metrics area until the first frame lands
+    document.getElementById("metricsDiv").innerHTML = `<p>Waiting for data...</p>`;
+
+
+    // ── Token Log helpers ─────────────────────────────────────────────────────────
+    function mmss(secs){
+      secs = Math.max(0, Math.floor(secs || 0));
+      const m = Math.floor(secs/60), s = secs % 60;
+      return `${m}:${s.toString().padStart(2,'0')}`;
+    }
+
+    function ensureParamSubpanels() {
+      // create two dedicated containers inside #parametersInfo:
+      //  - tokenLogDiv for quota/timers
+      //  - metricsDiv  for your FPS/label/etc.
+      if (!document.getElementById("tokenLogDiv") || !document.getElementById("metricsDiv")) {
+        const html = `
+          <div id="tokenLogDiv" style="font-family: ui-monospace, Menlo, monospace; font-size:12px;"></div>
+          <div id="metricsDiv"   style="margin-top:8px;"></div>
+        `;
+        parametersInfo.innerHTML = html;
+      }
+    }
+
+    async function refreshTokenPanel(){
+      ensureParamSubpanels();
+      const tokenLogDiv = document.getElementById("tokenLogDiv");
+
+      try{
+        const r = await fetch("/quota_debug", { credentials:"same-origin", cache:"no-cache" });
+        if (!r.ok) throw new Error(r.status);
+        const j  = await r.json();
+
+        const cfg = j.config || {};
+        const dd  = j.deepfake_detect || {};
+        const fs  = j.face_swap || {};
+
+        const meta = `Free uses: ${cfg.FREE_USES ?? "?"} | Window: ${cfg.FREE_WINDOW_MIN ?? "?"} min | Stream TTL (effective): ${j.effective_stream_ttl_min ?? "?"} min`;
+
+        const rows = [
+          ["Service", "Used", "Remaining", "Window resets", "Stream left"],
+          ["Detect (webcam)",
+            dd.uses ?? 0,
+            dd.remaining_tokens ?? (cfg.FREE_USES ?? 0),
+            mmss(dd.window_seconds_left ?? 0),
+            mmss(dd.stream_seconds_left ?? 0)
+          ],
+          ["Generate (face swap)",
+            fs.uses ?? 0,
+            fs.remaining_tokens ?? (cfg.FREE_USES ?? 0),
+            mmss(fs.window_seconds_left ?? 0),
+            "—"
+          ],
+        ];
+
+//          <div style="margin-bottom:6px;color:#777">${meta}</div>
+
+
+        const table = `
+          <table style="border-collapse:collapse;width:100%">
+            ${rows.map((row,i)=>`
+              <tr>
+                ${row.map((cell,idx)=>`
+                  <td style="
+                    border:1px solid #333; padding:6px 8px;
+                    ${i===0?'font-weight:700;background:#111;color:#ddd;':''}
+                    text-align:${idx===0?'left':'center'};">
+                    ${cell}
+                  </td>`).join("")}
+              </tr>`).join("")}
+          </table>
+        `;
+        tokenLogDiv.innerHTML = table;
+      }catch(e){
+        tokenLogDiv.innerHTML = `<div style="color:#c33">quota_debug unavailable (${e.message})</div>`;
+      }
+    }
+
+    // poll every second
+    setInterval(refreshTokenPanel, 1000);
+    refreshTokenPanel();
+
+    let lastTokenRefresh = 0;
+    async function refreshTokenPanelThrottled(){
+      const now = Date.now();
+      if (now - lastTokenRefresh > 950) {
+        lastTokenRefresh = now;
+        await refreshTokenPanel();
+      }
+    }
+
+
     // -------------------------------------------------------------------------
     // DETECT BUTTON: toggles detection on/off, calls detect loop
     // -------------------------------------------------------------------------
     if (detectButton) {
       detectButton.addEventListener("click", async function () {
-        this.classList.toggle("active");
         const eyeIconOn  = this.getAttribute("data-icon-on");
         const eyeIconOff = this.getAttribute("data-icon-off");
 
-        if (this.classList.contains("active")) {
-          // START
-          this.innerHTML = `<img src="${eyeIconOn}" class="icon eye_icon_on"> Deepfake Detection: On`;
-          if (detectLoopRunning) return;          // don’t start twice
-          isDetecting = true;
-          detectLoopRunning = true;
-          detectController = new AbortController();
-          updateDetectButtonUI();
-          detectDeepfakeLoop(detectController.signal)
-            .finally(() => {
-              isDetecting = false;
-              detectLoopRunning = false;
-              detectController = null;
-              updateDetectButtonUI();
-            });
-        } else {
-          // STOP
-          this.innerHTML = `<img src="${eyeIconOff}" class="icon eye_icon_off"> Deepfake Detection: Off`;
+        // ===== If currently ON -> turn OFF =====
+        if (detectButton.classList.contains("active")) {
+          detectButton.classList.remove("active");
           isDetecting = false;
           if (detectController) detectController.abort();
           deepfakeImage.style.display = "none";
           statusInfo.innerHTML = "DeepFake Detection Turned Off";
           updateDetectButtonUI();
 
-          // Tell backend to end the stream session now (so a new start consumes the next “use”)
+          // Tell backend to close the session
           fetch("/predict_deepfake", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "same-origin",
             body: JSON.stringify({ source: "webcam", action: "stop" })
           }).catch(()=>{});
+          await refreshTokenPanel();
+          return;
+        }
+
+        // ===== If currently OFF -> attempt START =====
+        if (detectLoopRunning) return; // safety: don't double-start
+        detectButton.disabled = true;
+        // transient label while we ask the server
+        detectButton.innerHTML = `<img src="${eyeIconOn}" class="icon eye_icon_on"> Starting…`;
+
+        try {
+          const r = await fetch("/predict_deepfake", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            cache: "no-cache",
+            body: JSON.stringify({ source: "webcam", action: "start" }),
+          });
+
+          if (r.status === 429) {
+            statusInfo.innerHTML = "Free quota reached.";
+            // stay OFF
+            detectButton.classList.remove("active");
+            detectButton.innerHTML = `<img src="${eyeIconOff}" class="icon eye_icon_off"> Deepfake Detection: Off`;
+            await refreshTokenPanel();
+            return;
+          }
+          if (r.status === 401 || r.redirected) {
+            statusInfo.innerHTML = "Login required.";
+            detectButton.classList.remove("active");
+            detectButton.innerHTML = `<img src="${eyeIconOff}" class="icon eye_icon_off"> Deepfake Detection: Off`;
+            return;
+          }
+          if (!r.ok) {
+            statusInfo.innerHTML = `Server error (${r.status}) starting stream.`;
+            detectButton.classList.remove("active");
+            detectButton.innerHTML = `<img src="${eyeIconOff}" class="icon eye_icon_off"> Deepfake Detection: Off`;
+            return;
+          }
+
+          // ✅ server accepted start → flip to ON and launch loop
+          detectButton.classList.add("active");
+          updateDetectButtonUI();
+          await refreshTokenPanel();
+
+          isDetecting = true;
+          detectLoopRunning = true;
+          detectController = new AbortController();
+          detectDeepfakeLoop(detectController.signal).finally(() => {
+            isDetecting = false;
+            detectLoopRunning = false;
+            detectController = null;
+            updateDetectButtonUI();
+          });
+
+        } catch (e) {
+          statusInfo.innerHTML = "Network error starting stream.";
+          detectButton.classList.remove("active");
+          detectButton.innerHTML = `<img src="${eyeIconOff}" class="icon eye_icon_off"> Deepfake Detection: Off`;
+        } finally {
+          detectButton.disabled = false;
         }
       });
     }
+
 
     // -------------------------------------------------------------------------
     // SHOW VIDEO BUTTON: plays selected video (if any)
@@ -206,6 +357,7 @@ document.addEventListener("DOMContentLoaded", function () {
           credentials: "same-origin",
           body: JSON.stringify({ source: "webcam", action: "stop" })
         }).catch(()=>{});
+        refreshTokenPanel();
     }
 
     function updateDetectButtonUI() {
@@ -218,7 +370,7 @@ document.addEventListener("DOMContentLoaded", function () {
             detectButton.innerHTML = `<img src="${eyeIconOff}" class="icon eye_icon_off"> Deepfake Detection: Off`;
         }
     }
-    
+
 
     // -------------------------------------------------------------------------
     // CAMERA BUTTON: toggles camera on/off 
@@ -261,22 +413,35 @@ document.addEventListener("DOMContentLoaded", function () {
                     const response = await fetch("/predict_deepfake", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      credentials: "same-origin",        // <— send login cookie
+                      credentials: "same-origin",
                       cache: "no-cache",
-                      body: JSON.stringify({ image: imageData, source: "webcam" }),
+                      body: JSON.stringify({ image: imageData, source: "webcam", action: "frame" }),
                     });
 
-                    // Gracefully handle auth/quota first
-                    if (response.redirected || response.status === 401) {
-                      statusInfo.innerHTML = "Login required. Stopping stream.";
-                      break;
-                    }
-                    if (response.status === 429) {
-                      let j = {};
-                      try { j = await response.json(); } catch {}
-                      statusInfo.innerHTML = `Free quota reached. Try again in ~${j.retry_in_minutes ?? 'a few'} min.`;
-                      break;
-                    }
+                if (response.status === 440) {
+                  statusInfo.innerHTML = "Session expired. Press Detect again.";
+                  detectButton.classList.remove("active");
+                  updateDetectButtonUI();
+                  isDetecting = false;
+                  await refreshTokenPanel();
+                  break;
+                }
+                if (response.redirected || response.status === 401) {
+                  statusInfo.innerHTML = "Login required. Stopping stream.";
+                  detectButton.classList.remove("active");
+                  updateDetectButtonUI();
+                  isDetecting = false;
+                  break;
+                }
+                if (response.status === 429) {
+                  statusInfo.innerHTML = "Free quota reached.";
+                  detectButton.classList.remove("active");
+                  updateDetectButtonUI();
+                  isDetecting = false;
+                  await refreshTokenPanel();
+                  break;
+                }
+
 
                     // Try JSON; if it isn't, show short text for debugging
                     let data;
@@ -307,7 +472,8 @@ document.addEventListener("DOMContentLoaded", function () {
                         statusInfo.innerHTML = `Detecting in real-time`;
                         // Show your info in parametersInfo
                         if (data.results.face_id !== undefined) {
-                            parametersInfo.innerHTML = `
+                            ensureParamSubpanels();
+                            document.getElementById("metricsDiv").innerHTML = `
                             <div style="text-align: left;">
                                 <b>FPS:</b> ${data.fps}<br>
                                 <b>Label:</b> ${data.results.label}<br>
@@ -364,7 +530,8 @@ document.addEventListener("DOMContentLoaded", function () {
                         console.log("Deepfake detection successful.");
                         statusInfo.innerHTML = `Detection Process Completed`;
                         if (data.results.video_path) {
-                            parametersInfo.innerHTML = `
+                            ensureParamSubpanels();
+                            document.getElementById("metricsDiv").innerHTML = `
                                 <div style="text-align: left;">
                                     <b>Total Frames:</b> ${data.results.total_frames} <br>
                                     <b>Frames with Faces:</b> ${data.results.frames_with_faces} <br>

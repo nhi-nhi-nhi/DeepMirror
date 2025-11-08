@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/account.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+
+<section class="account-container">
+    <div class="upgrade-card">
+        <!-- TIÊU ĐỀ CHÍNH ĐÃ ĐƯỢC CHỈNH SỬA VÀ CĂN GIỮA -->
+        <h1 class="main-page-title">Trang Thanh Toán</h1>
+        <p class="account-intro">Chọn gói tokens và nhập key kích hoạt để hoàn tất giao dịch.</p>
+
+        <!-- Hiển thị thông báo flash -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <ul class="flashes">
+                {% for category, message in messages %}
+                    <li class="flash-{{ category }}">{{ message }}</li>
+                {% endfor %}
+                </ul>
+            {% endif %}
+        {% endwith %}
+
+        <div class="upgrade-content-grid">
+
+            <!-- Cột 1: QR CODE VÀ THANH TOÁN -->
+            <div class="qr-payment-section">
+                <!-- SỬ DỤNG H2 CHO TIÊU ĐỀ BƯỚC -->
+<!--                <h2>Bước 1: Thanh toán</h2>-->
+                <p>Vui lòng chuyển khoản bằng mã QR dưới đây.</p>
+
+                <!-- SỬ DỤNG HÌNH ẢNH QR CODE CÓ SẴN CỦA BẠN -->
+                <div class="qr-image-container">
+                    <img src="{{ url_for('static', filename='images/qr_code.png') }}" alt="Mã QR Thanh toán" class="qr-image">
+                </div>
+                <p class="qr-note">Nội dung chuyển khoản: **Email**</p>
+            </div>
+
+            <!-- Cột 2: FORM KÍCH HOẠT TOKENS -->
+            <form method="POST" action="{{ url_for('auth.upgrade_tokens') }}" class="auth-form upgrade-form">
+                <!-- SỬ DỤNG H2 CHO TIÊU ĐỀ BƯỚC -->
+<!--                <h2>Bước 2: Kích hoạt </h2>-->
+
+                <div class="form-group">
+                    <label>Chọn gói Tokens:</label>
+                    <div class="token-options-grid">
+
+                        <label class="token-option" data-tokens="1">
+                            <input type="radio" name="tokens_option" value="1" required>
+                            <span class="token-amount-label">1 Token</span>
+                            <span class="token-price">20.000 VNĐ</span>
+                        </label>
+
+                        <label class="token-option" data-tokens="3">
+                            <input type="radio" name="tokens_option" value="3">
+                            <span class="token-amount-label">3 Tokens</span>
+                            <span class="token-price">50.000 VNĐ</span>
+                        </label>
+
+                        <label class="token-option" data-tokens="5">
+                            <input type="radio" name="tokens_option" value="5">
+                            <span class="token-amount-label">5 Tokens</span>
+                            <span class="token-price">80.000 VNĐ</span>
+                        </label>
+
+                        <label class="token-option" data-tokens="10">
+                            <input type="radio" name="tokens_option" value="10">
+                            <span class="token-amount-label">10 Tokens</span>
+                            <span class="token-price">150.000 VNĐ</span>
+                        </label>
+
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="admin_key">Nhập Key Kích hoạt:</label>
+                    <input type="text" id="admin_key" name="admin_key" placeholder="Nhập key " required>
+                </div>
+
+                <button type="submit" class="auth-btn auth-btn--save">Kích hoạt Tokens</button>
+
+<!--                <p class="auth-footer" style="margin-top: 20px; text-align: center;">-->
+<!--                    <a href="{{ url_for('auth.account') }}">Quay lại Trang Tài khoản</a>-->
+<!--                </p>-->
+            </form>
+        </div>
+    </div>
+</section>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const tokenOptions = document.querySelectorAll('.token-option');
+        const radioButtons = document.querySelectorAll('input[name="tokens_option"]');
+
+        function updateSelection() {
+            radioButtons.forEach(radio => {
+                const label = radio.closest('.token-option');
+                if (radio.checked) {
+                    label.classList.add('selected');
+                } else {
+                    label.classList.remove('selected');
+                }
+            });
+        }
+
+        radioButtons.forEach(radio => {
+            radio.addEventListener('change', updateSelection);
+        });
+
+        // Bổ sung: Cho phép nhấp vào bất kỳ đâu trong thẻ để chọn
+        tokenOptions.forEach(option => {
+            option.addEventListener('click', function() {
+                const radio = this.querySelector('input[type="radio"]');
+                if (radio && !radio.checked) {
+                    radio.checked = true;
+                    radio.dispatchEvent(new Event('change'));
+                }
+            });
+        });
+
+        // Cập nhật giao diện lần đầu (trường hợp có radio đã checked sẵn)
+        updateSelection();
+    });
+</script>
+{% endblock content %}

@@ -1,17 +1,41 @@
-<h2>Register</h2>
-<form method="post">
-  <input type="email" name="email" placeholder="Email" required>
-  <input type="password" name="password" placeholder="Password" required>
-  <button>Create</button>
-</form>
-<p><a href="{{ url_for('auth.login') }}">Login</a></p>
+{% extends "base.html" %}
 
-{% with msgs = get_flashed_messages(with_categories=true) %}
-  {% if msgs %}
-    <ul>
-    {% for cat,msg in msgs %}
-      <li><strong>{{ cat }}</strong> {{ msg }}</li>
-    {% endfor %}
-    </ul>
-  {% endif %}
-{% endwith %}
+{% block content %}
+<!-- Liên kết CSS form -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}"> 
+
+<div class="auth-wrapper">
+    <div class="auth-container">
+        <h2>Đăng ký Tài khoản</h2>
+        <p class="auth-intro">Tham gia DeepMirror ngay hôm nay!</p>
+
+        <!-- Hiển thị thông báo flash -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <ul class="flashes">
+                {% for category, message in messages %}
+                    <li class="flash-{{ category }}">{{ message }}</li> 
+                {% endfor %}
+                </ul>
+            {% endif %}
+        {% endwith %}
+
+        <form method="POST" action="{{ url_for('auth.register') }}" class="auth-form">
+            <div class="form-group">
+                <label for="email">Email:</label>
+                <input type="email" id="email" name="email" placeholder="Email của bạn" required autofocus>
+            </div>
+            <div class="form-group">
+                <label for="password">Mật khẩu:</label>
+                <input type="password" id="password" name="password" placeholder="Mật khẩu (ít nhất 6 ký tự)" minlength="6" required>
+            </div>
+            
+            <button type="submit" class="auth-btn auth-btn--save">Tạo Tài khoản</button>
+        </form>
+
+        <p class="auth-footer">
+            Đã có tài khoản? <a href="{{ url_for('auth.login') }}">Đăng nhập</a>
+        </p>
+    </div>
+</div>
+{% endblock content %}

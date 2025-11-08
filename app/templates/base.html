@@ -8,23 +8,40 @@
         <script src="https://cdn.tailwindcss.com"></script>
         <link rel="preconnect" href="https://fonts.googleapis.com">  
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@300..700&display=swap" rel="stylesheet">  
-        <link rel="stylesheet" href="static/css/main.css">
-        <link rel="stylesheet" href="static/css/upload.css">
-        <link rel="stylesheet" href="static/css/base.css">
+        <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@300..700&display=swap" rel="stylesheet">
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/upload.css') }}">
     </head>
 <body>
     <div class="app">
         <div class="header">
             <div class="header__logo">
-                <a href="{{url_for('index')}}" class="header__logo-link"> 
-                    <img src="./static/images/logo.png" alt="DeepMirror Logo" class="header__logo">
+                <a href="{{url_for('index')}}" class="header__logo-link">
+                    <!-- Sử dụng img tag rõ ràng cho CSS trong main.css -->
+                    <img src="{{ url_for('static', filename='images/logo.png') }}" alt="DeepMirror Logo" class="header__logo-img">
                 </a>
             </div>
-            
+
             <nav class="header__nav">
                 <a href="{{url_for('detect')}}" class="header__nav-link">Deepfake Detection</a>
                 <a href="{{url_for('generate')}}" class="header__nav-link">Deepfake Generation</a>
+
+                {% if current_user.is_authenticated %}
+                    <a href="{{ url_for('auth.account') }}" class="header__nav-link header__nav-link--account">
+                        Tài Khoản
+                    </a>
+                    <a href="{{ url_for('auth.logout') }}" class="header__nav-link header__nav-link--logout">
+                        Đăng Xuất
+                    </a>
+                {% else %}
+                    <a href="{{ url_for('auth.login') }}" class="header__nav-link header__nav-link--login">
+                        Đăng Nhập
+                    </a>
+                    <a href="{{ url_for('auth.register') }}" class="header__nav-link header__nav-link--register">
+                        Đăng Ký
+                    </a>
+                {% endif %}
             </nav>
         </div>
         {% block content %}{% endblock %}

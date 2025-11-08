@@ -15,5 +15,5 @@ class Config:
 
     FREE_USES = int(os.getenv("FREE_USES", 3))
     FREE_WINDOW_MIN = int(os.getenv("FREE_WINDOW_MIN", 30))
-    STREAM_SESSION_MIN = int(os.getenv("STREAM_SESSION_MIN", 5))
+    STREAM_SESSION_MIN = int(os.getenv("STREAM_SESSION_MIN", 1))
 

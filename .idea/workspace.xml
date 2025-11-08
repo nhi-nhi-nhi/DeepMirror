@@ -5,26 +5,26 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="182945ff-c106-4013-a3b3-554e1628344c" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/app/auth.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/limits.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/models/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/models/auth_models.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/templates/auth_login.html" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/templates/auth_register.html" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app.db" beforeDir="false" afterPath="$PROJECT_DIR$/app.db" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/AI_models/Preprocess.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/Preprocess.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/AI_models/backbone.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/backbone.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/AI_models/testing/backbone.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/testing/backbone.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/AI_models/testmodel.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/testmodel.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/AI_models/utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/utils.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/AI_models/videotester.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/videotester.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/Preprocess.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/Preprocess.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/backbone.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/backbone.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/checkpoints/meso_net_epoch_40-50.pth" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/checkpoints/meso_net_epoch_40-50.pth" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/testing/backbone.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/testing/backbone.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/testing/result.mp4" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/testing/result.mp4" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/testing/testvideo.mp4" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/testing/testvideo.mp4" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/testmodel.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/testmodel.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/utils.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/videotester.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/videotester.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/auth.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/limits.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/limits.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/models/auth_models.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models/auth_models.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/routes.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/routes.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/static/css/main.css" beforeDir="false" afterPath="$PROJECT_DIR$/app/static/css/main.css" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/static/js/detect.js" beforeDir="false" afterPath="$PROJECT_DIR$/app/static/js/detect.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/templates/auth_login.html" beforeDir="false" afterPath="$PROJECT_DIR$/app/templates/auth_login.html" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/templates/auth_register.html" beforeDir="false" afterPath="$PROJECT_DIR$/app/templates/auth_register.html" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/templates/base.html" beforeDir="false" afterPath="$PROJECT_DIR$/app/templates/base.html" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/templates/df-detect/detect.html" beforeDir="false" afterPath="$PROJECT_DIR$/app/templates/df-detect/detect.html" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/templates/df-generate/generate.html" beforeDir="false" afterPath="$PROJECT_DIR$/app/templates/df-generate/generate.html" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/config.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -65,7 +65,7 @@
     &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
     &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
     &quot;git-widget-placeholder&quot;: &quot;login&quot;,
-    &quot;last_opened_file_path&quot;: &quot;/home/nhigoingloud/Code/DeepMirror/DeepMirror/app/templates&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/home/nhigoingloud/Code/index.html&quot;,
     &quot;settings.editor.selected.configurable&quot;: &quot;com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable&quot;
   }
 }</component>

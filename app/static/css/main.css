@@ -52,7 +52,7 @@
     display: flex;
     min-height: 50%;
     height: 50%;
-    width: 30%;
+    width: 50%;
     background-color: var(--primary-color);
     border-radius: 10px;
     justify-content: space-around;

@@ -8,6 +8,7 @@ class User(UserMixin, db.Model):
     pw_hash = db.Column(db.String(255), nullable=False)
     plan = db.Column(db.String(50), default="free")
     plan_until = db.Column(db.DateTime, nullable=True)
+    tokens = db.Column(db.Integer, default=3, nullable=False)
 
 @login_manager.user_loader
 def load_user(user_id):
