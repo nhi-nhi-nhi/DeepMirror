@@ -4,18 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="182945ff-c106-4013-a3b3-554e1628344c" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app.db" beforeDir="false" afterPath="$PROJECT_DIR$/app.db" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/AI_models/videotester.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/AI_models/videotester.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/auth.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/limits.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/limits.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/auth_models.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models/auth_models.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/routes.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/routes.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/static/js/detect.js" beforeDir="false" afterPath="$PROJECT_DIR$/app/static/js/detect.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/static/js/generate.js" beforeDir="false" afterPath="$PROJECT_DIR$/app/static/js/generate.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/templates/auth_account.html" beforeDir="false" afterPath="$PROJECT_DIR$/app/templates/auth_account.html" afterDir="false" />
-    </list>
+    <list default="true" id="182945ff-c106-4013-a3b3-554e1628344c" name="Changes" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
