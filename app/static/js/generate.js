@@ -38,9 +38,8 @@ function ensureParamSubpanels() {
 // create initial placeholders
 ensureParamSubpanels();
 document.getElementById("metricsDiv").innerHTML = `<p>Waiting for data...</p>`;
-
 // ---------------------------------------------------------------------------
-// Refresh the quota table (calls /quota_debug)
+// Refresh the quota panel (calls /quota_debug)
 // ---------------------------------------------------------------------------
 async function refreshTokenPanel(){
   ensureParamSubpanels();
@@ -51,43 +50,42 @@ async function refreshTokenPanel(){
     if (!r.ok) throw new Error(r.status);
     const j  = await r.json();
 
-    const cfg = j.config || {};
-    const dd  = j.deepfake_detect || {};
-    const fs  = j.face_swap || {};
+        const paidTokens = j.paid_tokens_balance ?? 0;
 
-    const rows = [
-      ["Service", "Used", "Remaining", "Window resets", "Stream left"],
-      ["Detect (webcam)",
-        dd.uses ?? 0,
-        (cfg.FREE_USES ?? 0) - (dd.uses ?? 0),
-        mmss(dd.window_seconds_left ?? 0),
-        mmss(dd.stream_seconds_left ?? 0)
-      ],
-      ["Generate (face swap)",
-        fs.uses ?? 0,
-        (cfg.FREE_USES ?? 0) - (fs.uses ?? 0),
-        mmss(fs.window_seconds_left ?? 0),
-        mmss(fs.stream_seconds_left ?? 0)
-      ],
-    ];
+    const dd = j.deepfake_detect || {};
+    const fs = j.face_swap || {};
 
-    const table = `
-      <table style="border-collapse:collapse;width:100%">
-        ${rows.map((row,i)=>`
-          <tr>
-            ${row.map((cell,idx)=>`
-              <td style="
-                border:1px solid #333;padding:6px 8px;
-                ${i===0?'font-weight:700;background:#111;color:#ddd;':''}
-                text-align:${idx===0?'left':'center'};">
-                ${cell}
-              </td>`).join("")}
-          </tr>`).join("")}
-      </table>
+    const freeDetect = dd.free_remaining ?? 0;
+    const freeSwap = fs.free_remaining ?? 0;
+
+    // Get timers for BOTH services
+    const detectStream = mmss(dd.stream_seconds_left ?? 0);
+    const swapStream = mmss(fs.stream_seconds_left ?? 0);
+
+    // Get the longest window reset time to show the user
+    const windowReset = mmss(Math.max(dd.window_seconds_left ?? 0, fs.window_seconds_left ?? 0));
+
+    const html = `
+      <strong style="color: #ddd; font-size: 14px;">Your Tokens & Timers</strong>
+      <ul style="list-style-type: none; padding-left: 10px; margin: 5px 0 0 0; font-size: 13px;">
+        <li style="margin-bottom: 4px;">
+          <strong>${paidTokens}</strong> Shared Tokens (Paid)
+        </li>
+        <li style="margin-bottom: 4px;">
+          <strong>${freeDetect}</strong> Free Detect Uses (Stream: ${detectStream})
+        </li>
+        <li style="margin-bottom: 4px;">
+          <strong>${freeSwap}</strong> Free Generate Uses (Stream: ${swapStream})
+        </li>
+        <li style="margin-top: 8px; font-size: 11px; color: #888;">
+          (Free uses reset in ${windowReset})
+        </li>
+      </ul>
     `;
-    tokenLogDiv.innerHTML = table;
+
+    tokenLogDiv.innerHTML = html;
   }catch(e){
-    tokenLogDiv.innerHTML = `<div style="color:#c33">quota_debug unavailable (${e.message})</div>`;
+    tokenLogDiv.innerHTML = `<div style="color:#c33">Quota unavailable (${e.message})</div>`;
   }
 }
 

@@ -13,10 +13,10 @@ document.addEventListener("DOMContentLoaded", function () {
     const cameraFeed            = document.getElementById("cameraFeed");
 
     // OPTIONAL overlay if you want a <img> for annotated results
-    const deepfakeImage     = document.getElementById("deepfakeImage"); 
+    const deepfakeImage     = document.getElementById("deepfakeImage");
 
-    let selectedDetectVideo = null; 
-    let isDetecting         = false; 
+    let selectedDetectVideo = null;
+    let isDetecting         = false;
     let isCameraOn          = false;
     let cameraStream        = null;
     let detectController = null;    // AbortController for the current detect loop
@@ -49,19 +49,12 @@ document.addEventListener("DOMContentLoaded", function () {
       return `${m}:${s.toString().padStart(2,'0')}`;
     }
 
-    function ensureParamSubpanels() {
-      // create two dedicated containers inside #parametersInfo:
-      //  - tokenLogDiv for quota/timers
-      //  - metricsDiv  for your FPS/label/etc.
-      if (!document.getElementById("tokenLogDiv") || !document.getElementById("metricsDiv")) {
-        const html = `
-          <div id="tokenLogDiv" style="font-family: ui-monospace, Menlo, monospace; font-size:12px;"></div>
-          <div id="metricsDiv"   style="margin-top:8px;"></div>
-        `;
-        parametersInfo.innerHTML = html;
-      }
-    }
+    // This function is duplicated, we can keep it as is.
+    // function ensureParamSubpanels() { ... }
 
+    // ---------------------------------------------------------------------------
+    // Refresh the quota panel (calls /quota_debug)
+    // ---------------------------------------------------------------------------
     async function refreshTokenPanel(){
       ensureParamSubpanels();
       const tokenLogDiv = document.getElementById("tokenLogDiv");
@@ -71,50 +64,46 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!r.ok) throw new Error(r.status);
         const j  = await r.json();
 
-        const cfg = j.config || {};
-        const dd  = j.deepfake_detect || {};
-        const fs  = j.face_swap || {};
+        // Get all 3 token values from the API
+        const paidTokens = j.paid_tokens_balance ?? 0;
 
-        const meta = `Free uses: ${cfg.FREE_USES ?? "?"} | Window: ${cfg.FREE_WINDOW_MIN ?? "?"} min | Stream TTL (effective): ${j.effective_stream_ttl_min ?? "?"} min`;
+        const dd = j.deepfake_detect || {};
+        const fs = j.face_swap || {};
 
-        const rows = [
-          ["Service", "Used", "Remaining", "Window resets", "Stream left"],
-          ["Detect (webcam)",
-            dd.uses ?? 0,
-            dd.remaining_tokens ?? (cfg.FREE_USES ?? 0),
-            mmss(dd.window_seconds_left ?? 0),
-            mmss(dd.stream_seconds_left ?? 0)
-          ],
-          ["Generate (face swap)",
-            fs.uses ?? 0,
-            fs.remaining_tokens ?? (cfg.FREE_USES ?? 0),
-            mmss(fs.window_seconds_left ?? 0),
-            "—"
-          ],
-        ];
+        const freeDetect = dd.free_remaining ?? 0;
+        const freeSwap = fs.free_remaining ?? 0;
 
-//          <div style="margin-bottom:6px;color:#777">${meta}</div>
+        // Get timers for BOTH services
+        const detectStream = mmss(dd.stream_seconds_left ?? 0);
+        const swapStream = mmss(fs.stream_seconds_left ?? 0);
 
+        // Get the longest window reset time to show the user
+        const windowReset = mmss(Math.max(dd.window_seconds_left ?? 0, fs.window_seconds_left ?? 0));
 
-        const table = `
-          <table style="border-collapse:collapse;width:100%">
-            ${rows.map((row,i)=>`
-              <tr>
-                ${row.map((cell,idx)=>`
-                  <td style="
-                    border:1px solid #333; padding:6px 8px;
-                    ${i===0?'font-weight:700;background:#111;color:#ddd;':''}
-                    text-align:${idx===0?'left':'center'};">
-                    ${cell}
-                  </td>`).join("")}
-              </tr>`).join("")}
-          </table>
+        const html = `
+          <strong style="color: #ddd; font-size: 14px;">Your Tokens & Timers</strong>
+          <ul style="list-style-type: none; padding-left: 10px; margin: 5px 0 0 0; font-size: 13px;">
+            <li style="margin-bottom: 4px;">
+              <strong>${paidTokens}</strong> Shared Tokens (Paid)
+            </li>
+            <li style="margin-bottom: 4px;">
+              <strong>${freeDetect}</strong> Free Detect Uses (Stream: ${detectStream})
+            </li>
+            <li style="margin-bottom: 4px;">
+              <strong>${freeSwap}</strong> Free Generate Uses (Stream: ${swapStream})
+            </li>
+            <li style="margin-top: 8px; font-size: 11px; color: #888;">
+              (Free uses reset in ${windowReset})
+            </li>
+          </ul>
         `;
-        tokenLogDiv.innerHTML = table;
+
+        tokenLogDiv.innerHTML = html;
       }catch(e){
-        tokenLogDiv.innerHTML = `<div style="color:#c33">quota_debug unavailable (${e.message})</div>`;
+        tokenLogDiv.innerHTML = `<div style="color:#c33">Quota unavailable (${e.message})</div>`;
       }
     }
+
 
     // poll every second
     setInterval(refreshTokenPanel, 1000);
@@ -236,20 +225,26 @@ document.addEventListener("DOMContentLoaded", function () {
     // -------------------------------------------------------------------------
     // FUNCTION: show uploaded/processed video in cameraFeed
     // -------------------------------------------------------------------------
-    function showVideoOnCameraFeed(videoPath) {
-        // Set the source of the video directly to the cameraFeed element
-        cameraFeed.src = `/static/processed_videos/${videoPath.split('/')[3]}`;
-        console.log("Video path:", cameraFeed.src);  // Log to verify path
+    function showVideoOnCameraFeed(videoUrl) {
+        // Must clear srcObject before setting src
+        cameraFeed.srcObject = null;
 
-        cameraFeed.style.display = "block";  // Make sure it's visible
-        cameraFeed.style.visibility = "visible"; // Ensure visibility is on
+        // Set the new video file URL
+        cameraFeed.src = videoUrl;
 
-        // Wait for the video to be ready to play
+        // Add attributes to make it play
+        cameraFeed.controls = true;  // Show play/pause, volume
+        cameraFeed.autoplay = true;  // Start playing immediately
+        cameraFeed.muted = false;    // Allow sound for the video
+        cameraFeed.loop = true;      // Loop the video
+
+        console.log("Playing video from URL:", cameraFeed.src);
+        cameraFeed.style.display = "block";
+        cameraFeed.style.visibility = "visible";
         cameraFeed.oncanplay = function () {
             console.log("Video is ready to play.");
         };
     }
-
     // -------------------------------------------------------------------------
     // VIDEO UPLOAD / SELECTION
     // -------------------------------------------------------------------------
@@ -323,11 +318,17 @@ document.addEventListener("DOMContentLoaded", function () {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             cameraStream = stream;
-            cameraFeed.srcObject = stream;
 
+            // Remove file attributes before setting stream
+            cameraFeed.src = "";
+            cameraFeed.removeAttribute("controls");
+            cameraFeed.removeAttribute("autoplay");
+            cameraFeed.removeAttribute("loop");
+            cameraFeed.muted = true; // Webcam should be muted
+
+            cameraFeed.srcObject = stream;
             cameraFeed.style.display       = "block";
             cameraFeed.style.visibility    = "visible";
-
             isCameraOn = true;
             statusInfo.innerHTML = "Camera started successfully.";
             console.log("Camera stream started, isCameraOn =", isCameraOn);
@@ -363,7 +364,7 @@ document.addEventListener("DOMContentLoaded", function () {
     function updateDetectButtonUI() {
         const eyeIconOn  = detectButton.getAttribute("data-icon-on");
         const eyeIconOff = detectButton.getAttribute("data-icon-off");
-    
+
         if (detectButton.classList.contains("active")) {
             detectButton.innerHTML = `<img src="${eyeIconOn}" class="icon eye_icon_on"> Deepfake Detection: On`;
         } else {
@@ -373,7 +374,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
     // -------------------------------------------------------------------------
-    // CAMERA BUTTON: toggles camera on/off 
+    // CAMERA BUTTON: toggles camera on/off
     // (If you want detection auto-start, add isDetecting=true here)
     // -------------------------------------------------------------------------
     cameraButton.addEventListener("click", async function () {
@@ -381,11 +382,11 @@ document.addEventListener("DOMContentLoaded", function () {
             await startCamera();
         } else {
             stopCamera();
-    
+
             // Stop detection if you want
             isDetecting = false;
             detectButton.classList.remove("active");
-    
+
             // Force the detect button to show "Off" text/icons
             const eyeIconOff = detectButton.getAttribute("data-icon-off");
             detectButton.innerHTML = `<img src="${eyeIconOff}" class="icon eye_icon_off"> Deepfake Detection: Off`;
@@ -393,7 +394,7 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
 
-    
+
     async function detectDeepfakeLoop(signal) {
         console.log("detectDeepfakeLoop entered; isDetecting =", isDetecting);
 
@@ -529,7 +530,12 @@ document.addEventListener("DOMContentLoaded", function () {
                     if (data.results) {
                         console.log("Deepfake detection successful.");
                         statusInfo.innerHTML = `Detection Process Completed`;
-                        if (data.results.video_path) {
+                                                // --- START FIX: Get URL and create buttons ---
+
+                        // Get the URL from the new API response
+                        const videoUrl = data.results.output_path;
+
+                        if (data.results.total_frames) {
                             ensureParamSubpanels();
                             document.getElementById("metricsDiv").innerHTML = `
                                 <div style="text-align: left;">
@@ -545,14 +551,32 @@ document.addEventListener("DOMContentLoaded", function () {
                                 </div>
                             `;
                         }
-                        // For example, if you want to show the processed video:
-                        // showVideoOnCameraFeed(data.results.output_path);
-                        const lineBreak = document.createElement("br");
-                        statusInfo.appendChild(lineBreak);
-                        const showVideoButton = document.createElement("button");
-                        showVideoButton.textContent = "\n---Play video---";
-                        showVideoButton.addEventListener("click", () => showVideoOnCameraFeed(data.results.output_path));
-                        statusInfo.appendChild(showVideoButton);
+
+                        if (videoUrl) {
+                            console.log("Video URL received:", videoUrl);
+                            const lineBreak = document.createElement("br");
+                            statusInfo.appendChild(lineBreak);
+
+                            // 1. Create Play Button
+                            const playButton = document.createElement("button");
+                            playButton.textContent = "► Play Processed Video";
+                            playButton.className = "btn-dynamic"; // Add a class for styling
+                            playButton.style.marginRight = "10px"; // Add some spacing
+                            playButton.addEventListener("click", () => showVideoOnCameraFeed(videoUrl));
+                            statusInfo.appendChild(playButton);
+
+                            // 2. Create Download Button
+                            const downloadButton = document.createElement("a");
+                            downloadButton.textContent = "📥 Download Video";
+                            downloadButton.href = videoUrl;
+                            downloadButton.download = videoUrl.split('/').pop(); // e.g., "processed_video.mp4"
+                            downloadButton.className = "btn-dynamic download"; // Add classes for styling
+                            statusInfo.appendChild(downloadButton);
+
+                        } else {
+                            console.log("No video URL returned from server.");
+                            statusInfo.innerHTML = "Processing finished, but no video URL found.";
+                        }
                     } else {
                         console.log("No deepfake detected or error in video processing.");
                         statusInfo.innerHTML = "No deepfake detected.";

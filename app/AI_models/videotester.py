@@ -71,11 +71,17 @@ class DeepfakeVideoTester:
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        # Set up output video writer if needed
+        out = None  # Initialize writer to None
         if output_video_path:
-            fourcc = cv2.VideoWriter_fourcc(*'H264')
-            out = cv2.VideoWriter(output_video_path, fourcc, fps,
-                                 (frame_width, frame_height))
+            # 1. Change codec from 'H264' to 'mp4v' (much more reliable)
+            fourcc = cv2.VideoWriter_fourcc(*'VP80')
+            out = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
+
+            # 2. CRITICAL: Check if the writer was successfully opened
+            if not out.isOpened():
+                print(f"[ERROR] cv2.VideoWriter FAILED to open at: {output_video_path}")
+                print("[ERROR] Check if 'mp4v' codec is installed or try 'XVID' and change extension to .avi")
+                out = None  # Set to None so we don't try to write
 
         # Set up frame saving directory if needed
         if save_frames:
@@ -127,8 +133,12 @@ class DeepfakeVideoTester:
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
 
-            # Save output video
-            if output_video_path:
+            if out and out.isOpened():
+                # 4. Check for frame size mismatch (another common silent error)
+                if result_frame.shape[1] != frame_width or result_frame.shape[0] != frame_height:
+                    print(
+                        f"[WARN] Resizing frame from {result_frame.shape[1]}x{result_frame.shape[0]} to {frame_width}x{frame_height}")
+                    result_frame = cv2.resize(result_frame, (frame_width, frame_height))
                 out.write(result_frame)
 
             # Save individual frames
@@ -138,8 +148,9 @@ class DeepfakeVideoTester:
 
         # Clean up
         cap.release()
-        if output_video_path:
+        if out:
             out.release()
+            print(f"[DEBUG] Video writer released for: {output_video_path}")
         if display_results:
             cv2.destroyAllWindows()
 

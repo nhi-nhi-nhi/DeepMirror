@@ -86,6 +86,7 @@ def enforce_quota(service_name: str):
       - Webcam (stream) endpoints call with {"source":"webcam","action":"start|frame|stop"}.
       - Non-stream endpoints (single calls) count 1 use per call.
     """
+
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
@@ -101,7 +102,7 @@ def enforce_quota(service_name: str):
                     return jsonify({"error": "auth_required"}), 401
                 return redirect(url_for("auth.login"))
 
-            # 1) Paid users skip limits entirely
+            # 1) Paid (subscribed) users skip limits entirely
             if is_subscribed(current_user):
                 return fn(*args, **kwargs)
 
@@ -109,7 +110,7 @@ def enforce_quota(service_name: str):
             FREE_USES = int(current_app.config.get("FREE_USES", 3))
             FREE_WINDOW_MIN = int(current_app.config.get("FREE_WINDOW_MIN", 30))
             STREAM_SESSION_MIN = int(current_app.config.get("STREAM_SESSION_MIN", 2))
-            now = datetime.utcnow()
+            now = datetime.utcnow()  # Use utcnow() if your DB is in UTC
 
             # 3) Webcam / stream mode
             is_webcam, action = get_webcam_action()
@@ -119,6 +120,7 @@ def enforce_quota(service_name: str):
 
                 # ---- STOP ----
                 if action == "stop":
+                    # (This logic seems fine, no token consumption)
                     sess = (StreamSession.query
                             .filter_by(user_id=uid, service=service_name)
                             .order_by(StreamSession.expires_at.desc())
@@ -131,6 +133,7 @@ def enforce_quota(service_name: str):
 
                 # ---- FRAME ----
                 if action == "frame":
+                    # (This logic seems fine, no token consumption)
                     if _stream_ok(uid, service_name):
                         return fn(*args, **kwargs)
                     sess = _get_active_stream_session(uid, service_name)
@@ -158,24 +161,45 @@ def enforce_quota(service_name: str):
                     window = ServiceUsage(user_id=uid, service=service_name,
                                           window_start=now, uses=0)
                     db.session.add(window)
-                    db.session.commit()
+                    # No commit needed yet, will commit below
 
                 if window.uses >= FREE_USES:
+                    # <<< MODIFICATION START >>>
+                    # --- Free uses are gone. Check for paid tokens. ---
+                    paid_tokens = current_user.tokens or 0
+                    if paid_tokens > 0:
+                        # YES, consume one paid token
+                        current_user.tokens -= 1
+                        # db.session.commit() # Commit handled below
+
+                        # And create the stream session
+                        ttl_min = min(STREAM_SESSION_MIN, FREE_WINDOW_MIN)
+                        expires_at = now + timedelta(minutes=ttl_min)
+                        new_sess = StreamSession(user_id=uid, service=service_name, expires_at=expires_at)
+                        db.session.add(new_sess)
+                        db.session.commit()  # Commit paid token and new session
+
+                        _stream_set(uid, service_name, expires_at)
+                        return fn(*args, **kwargs)  # Run the function
+                    # <<< MODIFICATION END >>>
+
+                    # --- No free uses AND no paid tokens. Block. ---
                     retry_in = (window.window_start + timedelta(minutes=FREE_WINDOW_MIN)) - now
                     mins_left = max(0, int((retry_in.total_seconds() + 59) // 60))
                     return jsonify({"error": "free_quota_exceeded",
                                     "retry_in_minutes": mins_left}), 429
 
-                # consume one token and create session
+                # --- Free uses are available. Consume one. ---
                 window.uses += 1
-                db.session.commit()
+                # db.session.commit() # Commit handled below
 
+                # create session
                 ttl_min = min(STREAM_SESSION_MIN, FREE_WINDOW_MIN)
                 expires_at = now + timedelta(minutes=ttl_min)
 
                 new_sess = StreamSession(user_id=uid, service=service_name, expires_at=expires_at)
                 db.session.add(new_sess)
-                db.session.commit()
+                db.session.commit()  # Commit free use and new session
 
                 _stream_set(uid, service_name, expires_at)
                 return fn(*args, **kwargs)
@@ -189,9 +213,20 @@ def enforce_quota(service_name: str):
                 window = ServiceUsage(user_id=current_user.id, service=service_name,
                                       window_start=now, uses=0)
                 db.session.add(window)
-                db.session.commit()
+                # No commit needed yet
 
             if window.uses >= FREE_USES:
+                # <<< MODIFICATION START >>>
+                # --- Free uses are gone. Check for paid tokens. ---
+                paid_tokens = current_user.tokens or 0
+                if paid_tokens > 0:
+                    # YES, consume one paid token
+                    current_user.tokens -= 1
+                    db.session.commit()
+                    return fn(*args, **kwargs)  # Run the function
+                # <<< MODIFICATION END >>>
+
+                # --- No free uses AND no paid tokens. Block. ---
                 retry_in = (window.window_start + timedelta(minutes=FREE_WINDOW_MIN)) - now
                 mins_left = max(0, int((retry_in.total_seconds() + 59) // 60))
                 if is_json_request():
@@ -201,10 +236,13 @@ def enforce_quota(service_name: str):
                 flash(f"Free quota reached. Try again in ~{mins_left} minutes.", "warning")
                 return redirect(url_for("index"))
 
+            # --- Free uses are available. Consume one. ---
             window.uses += 1
             db.session.commit()
             return fn(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 # =============================================================================

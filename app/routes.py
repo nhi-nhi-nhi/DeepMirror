@@ -3,7 +3,6 @@ import insightface
 from app.AI_models.Preprocess import DeepfakePreprocessor
 from app.AI_models.videotester import DeepfakeVideoTester
 from insightface.app import FaceAnalysis
-import base64
 import re
 import cv2
 import numpy as np
@@ -15,10 +14,9 @@ import base64
 import time
 from flask_login import login_required
 from app.limits import enforce_quota
-from flask import render_template, request, jsonify, send_from_directory, current_app
+from flask import render_template, request, send_from_directory
 from datetime import datetime, timezone
-from flask import jsonify, current_app
-from flask_login import current_user
+from flask import jsonify
 from app.models.auth_models import ServiceUsage, StreamSession
 from flask_login import current_user
 from app.limits import stream_seconds_left_for  # <-- adjust path to where your limits.py lives
@@ -133,17 +131,21 @@ def convert_arrays_to_lists(obj):
     else:
         return obj
 
+
 @app.route("/quota_debug")
 def quota_debug():
     if not current_user.is_authenticated:
-        return jsonify({"error":"auth_required"}), 401
+        return jsonify({"error": "auth_required"}), 401
 
     cfg = {
         "FREE_USES": int(current_app.config.get("FREE_USES", 3)),
         "FREE_WINDOW_MIN": int(current_app.config.get("FREE_WINDOW_MIN", 30)),
         "STREAM_SESSION_MIN": int(current_app.config.get("STREAM_SESSION_MIN", 5)),
     }
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)  # Use UTC
+
+    # <<< FIX 1: Get the user's paid token balance
+    paid_tokens = current_user.tokens or 0
 
     def latest(service):
         w = (ServiceUsage.query
@@ -155,29 +157,40 @@ def quota_debug():
              .order_by(StreamSession.expires_at.desc())
              .first())
 
-        # normalize to UTC
+        # normalize to UTC (assuming DB might not have tzinfo)
         def as_utc(dt):
             if dt is None: return None
             return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
         w_start = as_utc(w.window_start) if w else None
-        s_exp   = as_utc(s.expires_at)   if s else None
+        s_exp = as_utc(s.expires_at) if s else None
 
         # seconds left in stream + window
-        stream_left = max(0, int((s_exp - now).total_seconds())) if s_exp else 0
-        if w_start:
-            window_total = cfg["FREE_WINDOW_MIN"] * 60
-            window_left = max(0, window_total - int((now - w_start).total_seconds()))
-        else:
-            window_left = 0
+        stream_left = max(0, int((s_exp - now).total_seconds())) if s_exp and s_exp > now else 0
 
-        uses = w.uses if w else 0
-        remaining = max(0, cfg["FREE_USES"] - uses)
+        window_left = 0
+        uses = 0
+        if w_start:
+            window_total_seconds = cfg["FREE_WINDOW_MIN"] * 60
+            elapsed_seconds = int((now - w_start).total_seconds())
+
+            # Check if window is still valid
+            if elapsed_seconds < window_total_seconds:
+                window_left = max(0, window_total_seconds - elapsed_seconds)
+                uses = w.uses if w else 0
+            # If window is expired, 'uses' remains 0 (and window_left remains 0)
+
+        # <<< FIX 2: Calculate free and total remaining tokens
+        free_remaining = max(0, cfg["FREE_USES"] - uses)
+        total_remaining = free_remaining + paid_tokens  # This is the new total
 
         return {
             "window_start": w_start.isoformat() if w_start else None,
             "uses": uses,
-            "remaining_tokens": remaining,
+            # <<< FIX 3: Report the correct numbers
+            "remaining_tokens": total_remaining,  # This is what the frontend will show
+            "free_remaining": free_remaining,
+            "paid_remaining": paid_tokens,
             "window_seconds_left": window_left,
             "stream_seconds_left": stream_left,
         }
@@ -186,9 +199,9 @@ def quota_debug():
         "deepfake_detect": latest("deepfake_detect"),
         "face_swap": latest("face_swap"),
         "config": cfg,
+        "paid_tokens_balance": paid_tokens,  # Also add to top-level response
         "effective_stream_ttl_min": min(cfg["STREAM_SESSION_MIN"], cfg["FREE_WINDOW_MIN"]),
     })
-
 
 
 @app.route('/generate_deepfake', methods=['POST'])
@@ -344,18 +357,14 @@ def _generate_deepfake_single_upload(data):
 @login_required
 @enforce_quota('deepfake_detect')
 def predict_deepfake():
-    # Parse JSON safely
     data = request.get_json(silent=True) or {}
     source_type = data.get("source", None)
     action = (data.get("action") or "").lower()
     image_data = data.get("image")
 
-    # Control pings for webcam streaming: no image required
-    # The quota decorator already handled accounting/session changes.
     if source_type == "webcam" and action in ("start", "stop"):
         return jsonify({"ok": True, "action": action}), 200
 
-    # Webcam frames
     if source_type == "webcam":
         if not image_data:
             return jsonify({"error": "No image provided"}), 400
@@ -389,30 +398,41 @@ def predict_deepfake():
         if not image_data:
             return jsonify({"error": "No video provided"}), 400
         try:
-            video_path = save_uploaded_video(image_data)
+            video_path = save_uploaded_video(image_data)  # This is a temp path
 
-            output_filename = f"processed_{uuid.uuid4().hex}.mp4"
-            output_dir = os.path.join("app", "static", "processed_videos")
+            output_filename = f"processed_{uuid.uuid4().hex}.webm"
+
+            # 1. Get the absolute path to the 'static' folder
+            #    This is the robust way to do it.
+            static_dir = current_app.static_folder
+
+            # 2. Create the OS-specific save path
+            output_dir = os.path.join(static_dir, "processed_videos")
             os.makedirs(output_dir, exist_ok=True)
             output_video_path = os.path.join(output_dir, output_filename)
 
+            # 3. Create the web-safe URL path
+            output_url_path = url_for('static', filename=f'processed_videos/{output_filename}')
             results = tester.analyze_video(
                 input_video_path=video_path,
-                output_video_path=output_video_path,
+                output_video_path=output_video_path,  # Pass the OS path for saving
                 display_results=False,
                 save_frames=False
             )
+
+            # 3. Overwrite the 'output_path' in results with the web-safe URL
+            results['output_path'] = output_url_path
+
         except Exception as e:
             return jsonify({"error": f"Error processing video: {str(e)}"}), 400
 
+        # 4. Return the results dict (which now contains the URL)
         return jsonify({
-            "processed_video": output_video_path,
             "results": results
         }), 200
 
     # Unknown source
     return jsonify({"error": "Invalid or missing 'source'"}), 400
-
 
 @app.route('/processed_videos/<filename>')
 def serve_video(filename):

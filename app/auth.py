@@ -1,10 +1,10 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from app import db
-from app.models.auth_models import User
+from app.models.auth_models import User, ServiceUsage
+from datetime import datetime, timezone, timedelta
 
-# Key bí mật cố định để kích hoạt token
 ADMIN_KEY = "ADMIN"
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
@@ -59,7 +59,51 @@ def logout():
 @auth_bp.route("/account")
 @login_required
 def account():
-    return render_template("auth_account.html", title="Account Settings")
+    # --- START FIX: Get all 3 token types ---
+
+    # 1. Get the single SHARED pool of Paid Tokens
+    paid_tokens = current_user.tokens or 0
+
+    # 2. Get Config
+    cfg = {
+        "FREE_USES": int(current_app.config.get("FREE_USES", 3)),
+        "FREE_WINDOW_MIN": int(current_app.config.get("FREE_WINDOW_MIN", 30)),
+    }
+    now = datetime.now(timezone.utc)
+
+    # 3. Helper function to get free uses for a specific service
+    def get_remaining_free_uses(service_name):
+        w = (ServiceUsage.query
+             .filter_by(user_id=current_user.id, service=service_name)
+             .order_by(ServiceUsage.window_start.desc())
+             .first())
+
+        uses = 0
+        if w:
+            w_start = w.window_start
+            if not w_start.tzinfo:
+                w_start = w_start.replace(tzinfo=timezone.utc)
+
+            window_total_seconds = cfg["FREE_WINDOW_MIN"] * 60
+            elapsed_seconds = int((now - w_start).total_seconds())
+
+            if elapsed_seconds < window_total_seconds:
+                uses = w.uses  # Window is valid, get uses
+
+        return max(0, cfg["FREE_USES"] - uses)
+
+    # 4. Calculate free uses for each service
+    free_detect_uses = get_remaining_free_uses("deepfake_detect")
+    free_swap_uses = get_remaining_free_uses("face_swap")
+
+    # --- END FIX ---
+
+    # 5. Pass all three values to the template
+    return render_template("auth_account.html",
+                           title="Account Settings",
+                           paid_tokens=paid_tokens,
+                           free_detect_uses=free_detect_uses,
+                           free_swap_uses=free_swap_uses)
 
 
 @auth_bp.route("/change-password", methods=["GET", "POST"])
@@ -96,28 +140,22 @@ def change_password():
 @login_required
 def upgrade_tokens():
     if request.method == "POST":
-        # Lấy thông tin từ form
-        tokens_to_add = int(request.form.get("tokens_option", 0))  # Số token đã chọn
+        tokens_to_add = int(request.form.get("tokens_option", 0))
         submitted_key = request.form.get("admin_key", "")
 
-        # 1. Kiểm tra Key bí mật
         if submitted_key != ADMIN_KEY:
             flash("Key kích hoạt không hợp lệ. Vui lòng kiểm tra lại.", "danger")
             return redirect(url_for("auth.upgrade_tokens"))
 
-        # 2. Kiểm tra số lượng tokens hợp lệ
         if tokens_to_add <= 0:
             flash("Vui lòng chọn số lượng tokens hợp lệ.", "danger")
             return redirect(url_for("auth.upgrade_tokens"))
 
-        # 3. Cập nhật Tokens
         current_user.tokens += tokens_to_add
         db.session.commit()
 
-        flash(f"Đã thêm thành công {tokens_to_add} tokens vào tài khoản! Tổng tokens hiện tại: {current_user.tokens}",
-              "success")
+        flash(f"Đã thêm thành công {tokens_to_add} tokens vào tài khoản!", "success")
         return redirect(url_for("auth.account"))
 
-    # Hiển thị trang mua tokens (GET)
     return render_template("auth_upgrade.html", title="Upgrade Tokens")
 # END: ROUTE MUA TOKENS
